@@ -1,0 +1,53 @@
+host_id: host1
+host_name: "my-workstation"
+
+backends:
+  claude:
+    module: backends.claude
+    default_model: claude-sonnet-4-5
+
+agents:
+  fred:
+    backend: claude
+    model: claude-sonnet-4-5
+    channels: ["#my-project"]
+    cwd: /home/user/projects/myapp
+    profile: dev
+
+ops_channel: "#ops"
+registry_channel: "#agent-registry"
+
+profiles:
+  read-only:
+    allowed_tools: [Read, LS, Grep, Glob]
+    permission_mode: default
+  dev:
+    allowed_tools: [Read, Write, Edit, Bash, LS, Grep, Glob]
+    permission_mode: acceptEdits
+  ops:
+    allowed_tools: [Read, Write, Edit, Bash, LS, Grep, Glob, WebFetch, WebSearch]
+    permission_mode: acceptEdits
+  sandbox:
+    allowed_tools: [Read, Write, Edit, Bash]
+    permission_mode: acceptEdits
+
+heartbeat:
+  interval_secs: 15
+  tips: true
+  stall_warn_mins: 5
+
+monitors:
+  default_poll_secs: 30
+
+transcript:
+  lookback_days: 7
+  onboarding: true
+
+permissions:
+  admin_users: []
+  ops_users: []
+  commands:
+    reload: admin_only
+    pause: ops
+    marketplace_install: ops
+    schedule: ops
