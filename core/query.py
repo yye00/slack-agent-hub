@@ -18,6 +18,7 @@ from slack_io.messages import (
 if TYPE_CHECKING:
     from core.agent import Agent
     from slack_sdk.web.async_client import AsyncWebClient
+    from slack_io.posting import SlackPoster
     from storage.db import Database
 
 logger = logging.getLogger(__name__)
@@ -39,6 +40,7 @@ class QueryEngine:
         self,
         agent: Agent,
         slack_client: AsyncWebClient,
+        poster: SlackPoster,
         db: Database,
         heartbeat_interval: int = 15,
         stall_warn_mins: int = 5,
@@ -46,6 +48,7 @@ class QueryEngine:
     ):
         self._agent = agent
         self._slack = slack_client
+        self._poster = poster
         self._db = db
         self._heartbeat_interval = heartbeat_interval
         self._stall_threshold = stall_warn_mins * 60
@@ -62,13 +65,14 @@ class QueryEngine:
         """Execute a query with heartbeat and error recovery."""
         agent = self._agent
 
-        # Post placeholder
+        # Post placeholder (plain — heartbeat will brand it on first tick)
         reply_ts = thread_ts
         try:
-            resp = await self._slack.chat_postMessage(
+            resp = await self._poster.post(
                 channel=channel_id,
                 text="⏳ Thinking...",
                 thread_ts=reply_ts,
+                agent_name=agent.name,
             )
             placeholder_ts = resp["ts"]
         except Exception as e:
@@ -104,35 +108,40 @@ class QueryEngine:
             chunks = chunk_response(result.text)
             if chunks:
                 try:
-                    await self._slack.chat_update(
+                    await self._poster.update(
                         channel=channel_id,
                         ts=placeholder_ts,
                         text=chunks[0],
+                        agent_name=agent.name,
                     )
                 except Exception:
-                    await self._slack.chat_postMessage(
+                    await self._poster.post(
                         channel=channel_id,
                         text=chunks[0],
                         thread_ts=reply_ts,
+                        agent_name=agent.name,
                     )
 
                 # Overflow chunks as thread replies
                 for chunk in chunks[1:]:
-                    await self._slack.chat_postMessage(
+                    await self._poster.post(
                         channel=channel_id,
                         text=chunk,
                         thread_ts=reply_ts or placeholder_ts,
+                        agent_name=agent.name,
                     )
         else:
             # Post error
             error_msg = f"❌ {agent.display_name} error: {result.error}"
             try:
-                await self._slack.chat_update(
-                    channel=channel_id, ts=placeholder_ts, text=error_msg
+                await self._poster.update(
+                    channel=channel_id, ts=placeholder_ts, text=error_msg,
+                    agent_name=agent.name,
                 )
             except Exception:
-                await self._slack.chat_postMessage(
-                    channel=channel_id, text=error_msg, thread_ts=reply_ts
+                await self._poster.post(
+                    channel=channel_id, text=error_msg, thread_ts=reply_ts,
+                    agent_name=agent.name,
                 )
 
         return result
@@ -227,8 +236,9 @@ class QueryEngine:
             )
 
             try:
-                await self._slack.chat_update(
-                    channel=channel_id, ts=placeholder_ts, text=msg
+                await self._poster.update(
+                    channel=channel_id, ts=placeholder_ts, text=msg,
+                    agent_name=agent.name,
                 )
             except Exception as e:
                 logger.debug(f"Heartbeat update failed: {e}")

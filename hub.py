@@ -28,6 +28,7 @@ from features.transcript import fetch_transcript, summarize_for_onboarding
 from features.files import download_slack_files, build_file_annotation, extract_file_paths
 from features.permalinks import expand_permalinks
 from slack_io.messages import chunk_response
+from slack_io.posting import SlackPoster
 from storage.db import Database
 
 # ── Logging ──
@@ -47,6 +48,7 @@ logger = logging.getLogger(__name__)
 config = None
 db: Database = None
 app: AsyncApp = None
+poster: SlackPoster = None
 agents: dict[str, Agent] = {}
 router: Router = None
 command_handler: CommandHandler = None
@@ -102,6 +104,17 @@ async def initialize_agents():
             db=db,
         )
         agents[name] = agent
+
+        # Resume a previous session if configured
+        if agent_cfg.resume_session:
+            agent.current_session_id = agent_cfg.resume_session
+            await agent.backend.start_session(
+                cwd=agent_cfg.cwd,
+                system_prompt="",  # will be rebuilt on first query
+                model=agent_cfg.model,
+            )
+            logger.info(f"Resuming session {agent_cfg.resume_session[:8]}… for {agent.display_name}")
+
         await db.upsert_agent(name, "active", agent._started_at if hasattr(agent, '_started_at') else "")
 
         logger.info(f"Initialized agent: {agent.display_name} ({backend_name})")
@@ -128,7 +141,7 @@ async def initialize_agents():
     )
 
     global command_handler
-    command_handler = CommandHandler(agents=agents, db=db, slack_client=app.client)
+    command_handler = CommandHandler(agents=agents, db=db, slack_client=app.client, poster=poster)
 
 
 async def handle_message(event, say):
@@ -176,8 +189,9 @@ async def handle_message(event, say):
                 f"```\n{agent.display_name} ({agent.backend.name}) $ {result.parsed.cli_command}\n"
                 f"{response}\n```"
             )
-            await app.client.chat_postMessage(
-                channel=channel_id, text=formatted, thread_ts=thread_ts
+            await poster.post(
+                channel=channel_id, text=formatted, thread_ts=thread_ts,
+                agent_name=agent.name,
             )
         return
 
@@ -232,6 +246,7 @@ async def run_agent_query(agent, text, channel_id, thread_ts):
     engine = QueryEngine(
         agent=agent,
         slack_client=app.client,
+        poster=poster,
         db=db,
         heartbeat_interval=config.heartbeat.interval_secs,
         stall_warn_mins=config.heartbeat.stall_warn_mins,
@@ -263,6 +278,36 @@ async def run_agent_query(agent, text, channel_id, thread_ts):
                 logger.debug(f"Auto-upload failed for {p}: {e}")
 
 
+async def announce_agents():
+    """Post an introduction message in each agent's channels on startup."""
+    for name, agent in agents.items():
+        label = agent.config.display_name or name.capitalize()
+        profile_name = agent.config.profile
+        profile = config.profiles.get(profile_name)
+        tools_list = ", ".join(profile.allowed_tools) if profile else "N/A"
+        lines = [
+            f"👋 *{label}@{config.host_id}* online",
+            f"• *Addressable as:* `@{name}` or `@{name}@{config.host_id}`",
+            f"• *Backend:* {agent.backend.name} ({agent.config.model})",
+            f"• *Working directory:* `{agent.config.cwd}`",
+            f"• *Profile:* {profile_name} — permission mode: {profile.permission_mode if profile else 'N/A'}",
+            f"• *Allowed tools:* {tools_list}",
+            f"• *Launch command:* `uv run python hub.py` (config: `config.yaml`)",
+            f"• *Host:* {config.host_id}",
+            "",
+            "Type `!help` for available commands.",
+        ]
+        msg = "\n".join(lines)
+
+        for ch_ref in agent.config.channels:
+            ch_id = resolve_channel(ch_ref)
+            if ch_id:
+                try:
+                    await poster.post(channel=ch_id, text=msg, agent_name=name)
+                except Exception as e:
+                    logger.warning(f"Failed to announce {name} in {ch_ref}: {e}")
+
+
 async def shutdown(sig_name: str):
     """Graceful shutdown."""
     global _shutting_down
@@ -280,7 +325,7 @@ async def shutdown(sig_name: str):
 
 async def main():
     """Main entry point."""
-    global config, db, app
+    global config, db, app, poster
 
     config_path = Path(os.getenv("CONFIG_PATH", "config.yaml"))
     config = load_config(config_path)
@@ -292,8 +337,15 @@ async def main():
     app = AsyncApp(token=os.environ["SLACK_BOT_TOKEN"])
     app.event("message")(handle_message)
 
+    poster = SlackPoster(
+        client=app.client,
+        host_id=config.host_id,
+        host_color=config.host_color,
+    )
+
     await resolve_channel_ids(app.client)
     await initialize_agents()
+    await announce_agents()
 
     logger.info(f"Hub {config.host_id} starting with {len(agents)} agent(s)")
 

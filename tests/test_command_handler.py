@@ -19,27 +19,29 @@ def handler():
     }
     db = AsyncMock()
     slack_client = AsyncMock()
-    return CommandHandler(agents=agents, db=db, slack_client=slack_client)
+    poster = AsyncMock()
+    poster.post = AsyncMock()
+    return CommandHandler(agents=agents, db=db, slack_client=slack_client, poster=poster)
 
 
 @pytest.mark.asyncio
 async def test_handle_agents(handler):
     await handler.handle("agents", [], {}, "C123", None, "fred", "U_USER")
-    handler._slack.chat_postMessage.assert_called_once()
-    call_text = handler._slack.chat_postMessage.call_args.kwargs["text"]
+    handler._poster.post.assert_called_once()
+    call_text = handler._poster.post.call_args.kwargs["text"]
     assert "Fred@host1" in call_text
 
 
 @pytest.mark.asyncio
 async def test_handle_help(handler):
     await handler.handle("help", [], {}, "C123", None, "fred", "U_USER")
-    handler._slack.chat_postMessage.assert_called_once()
-    call_text = handler._slack.chat_postMessage.call_args.kwargs["text"]
+    handler._poster.post.assert_called_once()
+    call_text = handler._poster.post.call_args.kwargs["text"]
     assert "!agents" in call_text
 
 
 @pytest.mark.asyncio
 async def test_handle_unknown_command(handler):
     await handler.handle("nonexistent", [], {}, "C123", None, "fred", "U_USER")
-    call_text = handler._slack.chat_postMessage.call_args.kwargs["text"]
+    call_text = handler._poster.post.call_args.kwargs["text"]
     assert "Unknown command" in call_text

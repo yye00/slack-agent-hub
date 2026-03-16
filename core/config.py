@@ -1,5 +1,6 @@
 """Configuration loading and validation."""
 
+import socket
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,8 @@ class AgentConfig:
     channels: list[str]
     cwd: str
     profile: str
+    display_name: str = ""
+    resume_session: str = ""
 
 
 @dataclass
@@ -60,6 +63,7 @@ class HubConfig:
     monitors: MonitorConfig
     transcript: TranscriptConfig
     permissions: PermissionsConfig
+    host_color: str = "#4A90E2"
 
 
 def load_config(path: Path) -> HubConfig:
@@ -93,9 +97,10 @@ def load_config(path: Path) -> HubConfig:
     tr_raw = raw.get("transcript", {})
     perm_raw = raw.get("permissions", {})
 
+    hostname = socket.gethostname()
     return HubConfig(
-        host_id=raw["host_id"],
-        host_name=raw["host_name"],
+        host_id=raw.get("host_id") or hostname,
+        host_name=raw.get("host_name") or hostname,
         backends=raw.get("backends", {}),
         agents=agents,
         profiles=profiles,
@@ -105,4 +110,5 @@ def load_config(path: Path) -> HubConfig:
         monitors=MonitorConfig(**mon_raw),
         transcript=TranscriptConfig(**tr_raw),
         permissions=PermissionsConfig(**perm_raw),
+        host_color=raw.get("host_color", "#4A90E2"),
     )
