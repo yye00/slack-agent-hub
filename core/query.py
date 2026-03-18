@@ -31,6 +31,9 @@ class QueryResult:
     success: bool
     error: str = ""
     tool_count: int = 0
+    cost_usd: float | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
 
 
 class QueryEngine:
@@ -102,6 +105,19 @@ class QueryEngine:
         except asyncio.CancelledError:
             pass
 
+        # Log costs to DB
+        if result.success and (result.cost_usd or result.input_tokens or result.output_tokens):
+            try:
+                await self._db.log_cost(
+                    agent_name=agent.name,
+                    session_id=result.session_id,
+                    input_tokens=result.input_tokens or 0,
+                    output_tokens=result.output_tokens or 0,
+                    model=agent.config.model,
+                )
+            except Exception as e:
+                logger.debug(f"Failed to log cost: {e}")
+
         # Update placeholder with response or completion
         if result.success:
             # Post response text
@@ -156,6 +172,9 @@ class QueryEngine:
         agent = self._agent
         response_parts: list[str] = []
         final_session_id = session_id or ""
+        cost_usd = None
+        input_tokens_count = None
+        output_tokens_count = None
 
         try:
             async for event in agent.backend.query(
@@ -170,6 +189,9 @@ class QueryEngine:
                 elif event.type == "complete":
                     if event.detail:
                         final_session_id = event.detail
+                    cost_usd = event.raw.get("cost_usd")
+                    input_tokens_count = event.raw.get("input_tokens")
+                    output_tokens_count = event.raw.get("output_tokens")
                 elif event.type == "error":
                     return QueryResult(
                         text="",
@@ -184,6 +206,9 @@ class QueryEngine:
                 session_id=final_session_id,
                 success=True,
                 tool_count=hb_state.tool_count,
+                cost_usd=cost_usd,
+                input_tokens=input_tokens_count,
+                output_tokens=output_tokens_count,
             )
 
         except Exception as e:

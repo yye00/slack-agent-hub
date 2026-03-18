@@ -91,7 +91,14 @@ class ClaudeBackend(Backend):
                     type="complete",
                     content="\n".join(response_text_parts),
                     detail=real_session_id,
-                    raw={"session_id": real_session_id},
+                    raw={
+                        "session_id": real_session_id,
+                        "cost_usd": getattr(message, "total_cost_usd", None),
+                        "duration_ms": getattr(message, "duration_ms", None),
+                        "num_turns": getattr(message, "num_turns", None),
+                        "input_tokens": getattr(message, "input_tokens", None),
+                        "output_tokens": getattr(message, "output_tokens", None),
+                    },
                 )
 
         self._pending_options = None
