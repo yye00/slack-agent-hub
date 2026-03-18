@@ -16,6 +16,7 @@ from slack_bolt.adapter.socket_mode.aiohttp import AsyncSocketModeHandler
 from slack_bolt.async_app import AsyncApp
 
 from core.agent import Agent
+from core.lifecycle import LifecycleNotifier, SessionEvent
 from core.command_handler import CommandHandler
 from core.commands import MessageType
 from core.config import load_config
@@ -54,6 +55,7 @@ agents: dict[str, Agent] = {}
 router: Router = None
 command_handler: CommandHandler = None
 channel_id_map: dict[str, str] = {}  # "#name" -> "C123..."
+lifecycle: LifecycleNotifier | None = None
 _shutting_down = False
 _socket_handler = None
 
@@ -252,6 +254,14 @@ async def run_agent_query(agent, text, channel_id, thread_ts, is_background=Fals
             system_prompt=system_prompt,
             model=agent.config.model,
         )
+        if session_id and lifecycle:
+            await lifecycle.notify(SessionEvent(
+                type="start",
+                agent_name=agent.name,
+                agent_display=agent.display_name,
+                session_id=session_id,
+                channel_id=channel_id,
+            ))
 
     # Run query
     engine = QueryEngine(
@@ -271,7 +281,17 @@ async def run_agent_query(agent, text, channel_id, thread_ts, is_background=Fals
         session_id=session_id,
     )
 
-    # Update session tracking
+    # Update session tracking — detect restarts
+    if result.session_id and result.session_id != session_id and lifecycle:
+        await lifecycle.notify(SessionEvent(
+            type="restart",
+            agent_name=agent.name,
+            agent_display=agent.display_name,
+            session_id=result.session_id,
+            channel_id=channel_id,
+            previous_session_id=session_id,
+            reason="session rotated by backend",
+        ))
     if result.session_id:
         agent.current_session_id = result.session_id
 
@@ -363,6 +383,11 @@ async def main():
     )
 
     await resolve_channel_ids(app.client)
+
+    global lifecycle
+    ops_id = resolve_channel(config.ops_channel) or ""
+    lifecycle = LifecycleNotifier(poster=poster, ops_channel_id=ops_id)
+
     await initialize_agents()
     await announce_agents()
 

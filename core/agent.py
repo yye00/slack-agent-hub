@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from core.config import AgentConfig, ProfileConfig
@@ -35,10 +36,12 @@ class Agent:
         self.current_session_id: str | None = None
         self.current_thread_ts: str | None = None
         self._active_query_task: asyncio.Task | None = None
+        self._started_at = datetime.now(timezone.utc).isoformat()
 
     @property
     def display_name(self) -> str:
-        return f"{self.name.capitalize()}@{self.host_id}"
+        label = self.config.display_name or self.name.capitalize()
+        return f"{label}@{self.host_id}"
 
     def pause(self):
         self.status = "paused"
@@ -53,8 +56,10 @@ class Agent:
         memory_text: str = "",
     ) -> str:
         """Build the full system prompt with identity, roster, pins, memory."""
+        label = self.config.display_name or self.name.capitalize()
         parts = [
-            f"You are {self.name.capitalize()}, a {self.backend.name} agent on {self.host_id}.",
+            f"You are {label}, a {self.backend.name} agent on host {self.host_id}.",
+            f"You are addressable as @{self.name} or @{self.name}@{self.host_id}.",
             f"Your working directory: {self.config.cwd}",
             f"Your channels: {', '.join(self.config.channels)}",
         ]
