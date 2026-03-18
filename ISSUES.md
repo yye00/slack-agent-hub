@@ -38,60 +38,36 @@ Startup self-test probes `files_getUploadURLExternal` to verify `files:write` sc
 **Status:** Done (SlackPoster with host_color)
 
 ### 8. Named sessions
-**Status:** Not implemented
-Sessions are identified only by UUIDs, making it impossible to tell what a session was doing. Need:
-- Auto-generate a human-readable name from the first prompt (e.g., "dmrg-optimization-run").
-- Store both UUID and name in the DB. Display name everywhere the UUID currently appears.
-- `!sessions` command shows: name, UUID (truncated), age, status, last activity.
+**Status:** Done (2026-03-18)
+`core/session_naming.py` generates kebab-case names from first prompt. Migration 002 adds `name` column. `!sessions` shows name, truncated UUID, age, status, last activity. `!status` displays session name alongside UUID. Migration system now tracks applied migrations for idempotency.
 
 ### 9. Hub health monitoring
-**Status:** Not implemented
-No way to know if the hub is healthy without SSH-ing into the host. Need:
-- Periodic health heartbeat to ops channel (configurable interval, default 5 min).
-- Report: agents active, queries in flight, memory usage, backend connectivity.
-- Alert on: agent crash, backend unreachable, query timeout, high error rate.
-- `!health` command for on-demand status.
+**Status:** Done (2026-03-18)
+`core/health.py` provides `HealthMonitor` with periodic heartbeat to ops (5 min default) and `build_health_report` for on-demand `!health`. Reports agents active/paused, queries in flight, memory usage. `check_anomalies` detects crashed query tasks and abnormal agent statuses.
 
 ### 10. Diagnostic commands
-**Status:** Not implemented
-When things go wrong, there's no way to inspect hub state from Slack. Need:
-- `!health` — hub health summary (agents, backends, connections).
-- `!logs [agent] [N]` — last N log lines for an agent (default 20).
-- `!diag [agent]` — deep diagnostic: session state, pending queries, memory usage, backend status.
-- `!test [agent]` — send a trivial query to verify the agent's backend is responsive.
+**Status:** Done (2026-03-18)
+`!health` — hub health summary. `!logs [agent] [N]` — last N stderr lines (default 20). `!diag [agent]` — session state, backend, config, recent stderr. `!test [agent]` — sends trivial query to verify backend (requires active session).
 
 ### 11. Session continuity protection
-**Status:** Not implemented
-When a session dies, all context is lost. The new session starts cold. Need:
-- Before a session ends (crash or clean shutdown), save a summary to the DB.
-- On restart, inject a preamble: "You are resuming work. Previous session summary: ..."
-- If session died uncleanly, note that in the preamble so the agent knows to verify state.
+**Status:** Done (2026-03-18)
+`core/continuity.py` provides `build_resume_preamble` and `generate_session_summary`. Migration 003 adds `summary` and `ended_cleanly` columns. Summaries saved on session rotation and clean shutdown. Preamble injected into system prompt on new session if previous summary exists. Unclean shutdown preamble warns agent to verify state.
 
 ### 12. Runtime config reload (`!reload`)
-**Status:** Not implemented
-Currently requires full service restart for any config change. Need `!reload` command to re-read config.yaml and apply agent/profile changes without dropping the Socket Mode connection.
+**Status:** Done (2026-03-18)
+`!reload` re-reads and validates config.yaml. Reports agent/profile counts. Agent/profile changes take effect on next session start. Socket Mode connection preserved.
 
 ### 13. Help docs per context
-**Status:** Incomplete
-- Ops channel commands vs in-channel commands not separated
-- No flag documentation (`--model`, `--chrome`)
-- No usage examples
-- No explanation of profiles and what they allow
+**Status:** Done (2026-03-18)
+`!help` rewritten with organized categories (Agent, Session, Diagnostics, Memory & Context, Admin, CLI). Includes flag documentation (`--model`), usage patterns, and profile explanation.
 
 ### 14. Missing commands from slacker
-**Status:** Not implemented
-Commands that exist in slacker but not in slack-agent-hub:
-- `!context` — fetch and summarize channel transcript
-- `!search` — search channel history by keyword
-- `!history` — show recent channel messages
-- `!watch` / `!monitor` / `!monitors` / `!stop` — file/process monitoring
-- `!restart` — restart an agent
-- `!reload` — reload config
-- `!roster` / `!dashboard` — federation commands
+**Status:** Done (2026-03-18)
+Implemented: `!context`, `!search`, `!history`, `!restart`, `!reload`, `!roster`. Deferred: `!watch`/`!monitor`/`!stop` (file/process monitoring — Tier 3), `!dashboard` (federation dashboard — Tier 3).
 
 ### 15. Cost tracking during queries
-**Status:** Schema exists, not wired
-The `cost_log` table exists in SQLite but `QueryEngine` doesn't log costs after queries complete. Need to capture token usage from backend events and write to `cost_log`.
+**Status:** Done (2026-03-18)
+`QueryEngine` captures `cost_usd`, `input_tokens`, `output_tokens` from backend `complete` events and logs to `cost_log` table. Claude backend extracts token counts from `ResultMessage`. Non-fatal — logging failures don't break queries.
 
 ### 16. Gemini backend adapter
 **Status:** Not implemented
@@ -132,6 +108,15 @@ Single orchestrator serving multiple Slack workspaces.
 ---
 
 ## Recently Fixed
+- ✅ Named sessions with auto-generated kebab-case names (2026-03-18)
+- ✅ Cost tracking wired from backend events to cost_log DB (2026-03-18)
+- ✅ Hub health monitoring with periodic heartbeat and anomaly alerts (2026-03-18)
+- ✅ Diagnostic commands: !health, !diag, !logs, !test (2026-03-18)
+- ✅ Session continuity protection with summary save and preamble injection (2026-03-18)
+- ✅ Runtime config reload via !reload (2026-03-18)
+- ✅ Missing slacker commands: !restart, !roster, !history, !context, !search (2026-03-18)
+- ✅ Help docs rewritten with organized categories and flag documentation (2026-03-18)
+- ✅ Idempotent migration system with registry-based tracking (2026-03-18)
 - ✅ Multi-host message deduplication with Name@host addressing (2026-03-18)
 - ✅ Thread-based task dispatch via /btw background commands (2026-03-18)
 - ✅ Session lifecycle notifications to ops and agent channels (2026-03-18)
