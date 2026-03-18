@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from datetime import datetime, timezone
+
 from features.memory import read_memory
 from slack_io.messages import chunk_response
 
@@ -69,13 +71,21 @@ class CommandHandler:
         name = args[0] if args else target_agent
         agent = self._agents.get(name)
         if agent:
+            session_display = "none"
+            if agent.current_session_id:
+                session = await self._db.get_session(agent.current_session_id)
+                sname = session.get("name", "") if session else ""
+                if sname:
+                    session_display = f"{sname} (`{agent.current_session_id[:8]}…`)"
+                else:
+                    session_display = f"`{agent.current_session_id[:8]}…`"
             text = (
                 f"*{agent.display_name}*\n"
                 f"Backend: {agent.backend.name}\n"
                 f"Model: {agent.config.model}\n"
                 f"Profile: {agent.config.profile}\n"
                 f"Status: {agent.status}\n"
-                f"Session: {agent.current_session_id or 'none'}\n"
+                f"Session: {session_display}\n"
                 f"CWD: {agent.config.cwd}"
             )
             await self._reply(channel_id, text, thread_ts)
@@ -103,6 +113,26 @@ class CommandHandler:
             agent._active_query_task.cancel()
             await self._reply(channel_id, f"🛑 Cancelled query for {agent.display_name}.", thread_ts)
 
+    @staticmethod
+    def _format_age(iso_ts: str) -> str:
+        """Convert ISO timestamp to human-readable age like '2h ago'."""
+        try:
+            created = datetime.fromisoformat(iso_ts)
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            delta = datetime.now(timezone.utc) - created
+            secs = int(delta.total_seconds())
+            if secs < 60:
+                return f"{secs}s ago"
+            elif secs < 3600:
+                return f"{secs // 60}m ago"
+            elif secs < 86400:
+                return f"{secs // 3600}h ago"
+            else:
+                return f"{secs // 86400}d ago"
+        except (ValueError, TypeError):
+            return "?"
+
     async def _cmd_sessions(self, args, options, channel_id, thread_ts, target_agent, user):
         name = args[0] if args else target_agent
         if name:
@@ -110,10 +140,16 @@ class CommandHandler:
             if sessions:
                 lines = []
                 for s in sessions:
-                    session_name = f" {s['name']}" if s.get("name") else ""
-                    label = f" [{s['label']}]" if s.get("label") else ""
+                    session_name = s.get("name") or "unnamed"
+                    age = self._format_age(s.get("created_at", ""))
+                    status = "archived" if s.get("archived") else "active"
+                    last_active = s.get("last_active") or "never"
+                    if last_active != "never":
+                        last_active = self._format_age(last_active)
                     model = f" ({s['model']})" if s.get("model") else ""
-                    lines.append(f"  {s['id'][:8]}{session_name}{label}{model} — {s.get('created_at', '?')}")
+                    lines.append(
+                        f"  `{s['id'][:8]}` {session_name}{model} │ {status} │ {age} │ last: {last_active}"
+                    )
                 text = f"Sessions for {name}:\n" + "\n".join(lines)
             else:
                 text = f"No sessions for {name}."
