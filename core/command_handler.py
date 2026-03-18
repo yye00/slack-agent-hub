@@ -440,6 +440,83 @@ class CommandHandler:
             )
         await self._reply(channel_id, "\n".join(lines), thread_ts)
 
+    async def _cmd_export(self, args, options, channel_id, thread_ts, target_agent, user):
+        """Export session metadata as formatted JSON."""
+        if not args:
+            await self._reply(channel_id, "Usage: !export <session_id>", thread_ts)
+            return
+        session = await self._db.get_session(args[0])
+        if not session:
+            await self._reply(channel_id, f"Session `{args[0]}` not found.", thread_ts)
+            return
+        import json
+        export_data = {k: v for k, v in session.items() if v is not None}
+        text = f"*Session export:*\n```\n{json.dumps(export_data, indent=2)}\n```"
+        await self._reply(channel_id, text, thread_ts)
+
+    async def _cmd_import(self, args, options, channel_id, thread_ts, target_agent, user):
+        """Import a session record from JSON."""
+        if not args:
+            await self._reply(channel_id, "Usage: !import <json_string>", thread_ts)
+            return
+        import json
+        try:
+            data = json.loads(" ".join(args))
+        except json.JSONDecodeError as e:
+            await self._reply(channel_id, f"Invalid JSON: {e}", thread_ts)
+            return
+        required = ["id", "agent_name", "model", "backend"]
+        missing = [k for k in required if k not in data]
+        if missing:
+            await self._reply(channel_id, f"Missing required fields: {', '.join(missing)}", thread_ts)
+            return
+        try:
+            await self._db.create_session(
+                id=data["id"],
+                agent_name=data["agent_name"],
+                thread_ts=data.get("thread_ts"),
+                label=data.get("label"),
+                model=data["model"],
+                backend=data["backend"],
+            )
+            if data.get("name"):
+                await self._db.update_session_name(data["id"], data["name"])
+            await self._reply(
+                channel_id,
+                f"✅ Imported session `{data['id'][:8]}…` for {data['agent_name']}.",
+                thread_ts,
+            )
+        except Exception as e:
+            await self._reply(channel_id, f"Import failed: {e}", thread_ts)
+
+    async def _cmd_fork(self, args, options, channel_id, thread_ts, target_agent, user):
+        """Clone a session with a new UUID. Does NOT set it as active."""
+        if not args:
+            await self._reply(channel_id, "Usage: !fork <session_id>", thread_ts)
+            return
+        source = await self._db.get_session(args[0])
+        if not source:
+            await self._reply(channel_id, f"Session `{args[0]}` not found.", thread_ts)
+            return
+        import uuid
+        new_id = str(uuid.uuid4())
+        source_label = source.get("name") or args[0][:8]
+        await self._db.create_session(
+            id=new_id,
+            agent_name=source["agent_name"],
+            thread_ts=source.get("thread_ts"),
+            label=f"fork of {source_label}",
+            model=source.get("model"),
+            backend=source.get("backend"),
+        )
+        fork_name = f"fork-{source_label}"
+        await self._db.update_session_name(new_id, fork_name)
+        await self._reply(
+            channel_id,
+            f"🔀 Forked `{args[0][:8]}…` → `{new_id[:8]}…` ({fork_name}). Use `!resume {new_id[:8]}` to switch.",
+            thread_ts,
+        )
+
     async def _cmd_help(self, args, options, channel_id, thread_ts, target_agent, user):
         help_text = (
             "*Agent Commands:*\n"
@@ -454,6 +531,9 @@ class CommandHandler:
             "  `!sessions [agent]` — list sessions (name, UUID, age, status)\n"
             "  `!resume <session_id>` — resume a previous session\n"
             "  `!refresh` — new session, keep old in history\n"
+            "  `!export <session_id>` — export session data as JSON\n"
+            "  `!import <json>` — import a session from JSON\n"
+            "  `!fork <session_id>` — clone session for experimentation\n"
             "\n*Diagnostics:*\n"
             "  `!health` — hub health summary\n"
             "  `!diag [agent]` — deep diagnostic (session, backend, config)\n"
