@@ -22,6 +22,7 @@ from core.config import load_config
 from core.heartbeat import TipRotator
 from core.query import QueryEngine
 from core.router import Router, RouteAction
+from core.thread_dispatch import is_thread_reply, build_background_prompt
 from backends.claude import ClaudeBackend
 from features.memory import read_memory, truncate_to_token_limit
 from features.transcript import fetch_transcript, summarize_for_onboarding
@@ -182,7 +183,8 @@ async def handle_message(event, say):
     if result.action == RouteAction.AGENT_QUERY:
         agent = agents.get(result.target_agent)
         if agent and agent.status == "active":
-            await run_agent_query(agent, text, channel_id, thread_ts)
+            is_bg = is_thread_reply(event)
+            await run_agent_query(agent, text, channel_id, thread_ts, is_background=is_bg)
         return
 
     if result.action == RouteAction.CLI_PASSTHROUGH:
@@ -209,8 +211,11 @@ async def handle_message(event, say):
         return
 
 
-async def run_agent_query(agent, text, channel_id, thread_ts):
+async def run_agent_query(agent, text, channel_id, thread_ts, is_background=False):
     """Execute a query against an agent."""
+    if is_background and agent.current_session_id:
+        text = build_background_prompt(text, agent.backend.name)
+
     # Expand permalinks
     text = await expand_permalinks(app.client, text)
 
