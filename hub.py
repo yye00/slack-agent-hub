@@ -23,6 +23,7 @@ from core.config import load_config
 from core.heartbeat import TipRotator
 from core.query import QueryEngine
 from core.router import Router, RouteAction
+from core.selftest import StartupSelfTest
 from core.thread_dispatch import is_thread_reply, build_background_prompt
 from backends.claude import ClaudeBackend
 from features.memory import read_memory, truncate_to_token_limit
@@ -57,6 +58,7 @@ command_handler: CommandHandler = None
 channel_id_map: dict[str, str] = {}  # "#name" -> "C123..."
 lifecycle: LifecycleNotifier | None = None
 _shutting_down = False
+_selftest_passed = False
 _socket_handler = None
 
 # ── Backend registry ──
@@ -156,6 +158,9 @@ async def initialize_agents():
 async def handle_message(event, say):
     """Main message handler — routes to agents or commands."""
     if _shutting_down:
+        return
+
+    if not _selftest_passed:
         return
 
     text = event.get("text", "")
@@ -387,6 +392,28 @@ async def main():
     global lifecycle
     ops_id = resolve_channel(config.ops_channel) or ""
     lifecycle = LifecycleNotifier(poster=poster, ops_channel_id=ops_id)
+
+    # Run startup self-test
+    all_channel_ids = set()
+    for agent_cfg in config.agents.values():
+        for ch_ref in agent_cfg.channels:
+            ch_id = resolve_channel(ch_ref)
+            if ch_id:
+                all_channel_ids.add(ch_id)
+
+    selftest = StartupSelfTest(
+        slack_client=app.client,
+        poster=poster,
+        ops_channel_id=ops_id,
+    )
+    global _selftest_passed
+    _selftest_passed = await selftest.run_and_report(
+        channel_ids=list(all_channel_ids),
+        backend_names=list(config.backends.keys()),
+    )
+
+    if not _selftest_passed:
+        logger.error("Critical self-test failures — hub will not accept messages")
 
     await initialize_agents()
     await announce_agents()
