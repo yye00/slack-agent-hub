@@ -70,12 +70,12 @@ Implemented: `!context`, `!search`, `!history`, `!restart`, `!reload`, `!roster`
 `QueryEngine` captures `cost_usd`, `input_tokens`, `output_tokens` from backend `complete` events and logs to `cost_log` table. Claude backend extracts token counts from `ResultMessage`. Non-fatal — logging failures don't break queries.
 
 ### 16. Gemini backend adapter
-**Status:** Not implemented
-Subprocess-based adapter for Google Gemini CLI. Interface defined in `backends/base.py`.
+**Status:** Done (2026-03-18)
+`backends/gemini.py` wraps Gemini CLI in headless mode (`gemini -p --output-format stream-json --yolo`). Parses stream-json events into unified Event stream. Supports session resume via `-r`. Registered in `BACKEND_CLASSES`.
 
 ### 17. Codex backend adapter
-**Status:** Not implemented
-Subprocess-based adapter for OpenAI Codex CLI. Interface defined in `backends/base.py`.
+**Status:** Done (2026-03-18)
+`backends/codex.py` wraps Codex CLI in non-interactive mode (`codex exec --json`). Parses JSONL events into unified Event stream. Supports session resume via `codex exec resume`. Registered in `BACKEND_CLASSES`.
 
 ---
 
@@ -116,6 +116,8 @@ Single orchestrator serving multiple Slack workspaces. Requires separate design 
 ---
 
 ## Recently Fixed
+- ✅ Gemini CLI backend adapter with stream-json parsing (#16) (2026-03-18)
+- ✅ Codex CLI backend adapter with JSONL parsing (#17) (2026-03-18)
 - ✅ Session export/import and forking via !export, !import, !fork (2026-03-18)
 - ✅ Structured JSON logging with rotation (2026-03-18)
 - ✅ Auto-save session summaries to agent MEMORY.md (2026-03-18)

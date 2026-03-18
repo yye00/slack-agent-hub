@@ -29,6 +29,8 @@ from core.permissions import PermissionChecker
 from core.selftest import StartupSelfTest
 from core.thread_dispatch import is_thread_reply, build_background_prompt
 from backends.claude import ClaudeBackend
+from backends.gemini import GeminiBackend
+from backends.codex import CodexBackend
 from core.session_naming import generate_session_name
 from core.continuity import build_resume_preamble, generate_session_summary
 from features.memory import read_memory, truncate_to_token_limit, append_memory
@@ -73,8 +75,8 @@ _socket_handler = None
 
 BACKEND_CLASSES = {
     "claude": ClaudeBackend,
-    # "codex": CodexBackend,   # deferred
-    # "gemini": GeminiBackend, # deferred
+    "codex": CodexBackend,
+    "gemini": GeminiBackend,
 }
 
 
