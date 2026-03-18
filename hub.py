@@ -28,6 +28,7 @@ from core.selftest import StartupSelfTest
 from core.thread_dispatch import is_thread_reply, build_background_prompt
 from backends.claude import ClaudeBackend
 from core.session_naming import generate_session_name
+from core.continuity import build_resume_preamble, generate_session_summary
 from features.memory import read_memory, truncate_to_token_limit
 from features.transcript import fetch_transcript, summarize_for_onboarding
 from features.files import download_slack_files, build_file_annotation, extract_file_paths
@@ -257,6 +258,16 @@ async def run_agent_query(agent, text, channel_id, thread_ts, is_background=Fals
     # Start or resume session
     session_id = agent.current_session_id
     if not session_id:
+        # Check for previous session summary to inject as preamble
+        prev = await db.get_previous_session(agent.name)
+        if prev and prev.get("summary"):
+            preamble = build_resume_preamble(
+                previous_session_name=prev.get("name") or prev["id"][:8],
+                summary=prev["summary"],
+                ended_cleanly=bool(prev.get("ended_cleanly", True)),
+            )
+            system_prompt = preamble + "\n\n" + system_prompt
+
         session_id = await agent.backend.start_session(
             cwd=agent.config.cwd,
             system_prompt=system_prompt,
@@ -290,16 +301,24 @@ async def run_agent_query(agent, text, channel_id, thread_ts, is_background=Fals
     )
 
     # Update session tracking — detect restarts
-    if result.session_id and result.session_id != session_id and lifecycle:
-        await lifecycle.notify(SessionEvent(
-            type="restart",
-            agent_name=agent.name,
-            agent_display=agent.display_name,
-            session_id=result.session_id,
-            channel_id=channel_id,
-            previous_session_id=session_id,
-            reason="session rotated by backend",
-        ))
+    if result.session_id and result.session_id != session_id:
+        # Save summary for the old session before marking it rotated
+        if session_id:
+            try:
+                summary = generate_session_summary(result.text or "")
+                await db.save_session_summary(session_id, summary, ended_cleanly=True)
+            except Exception as e:
+                logger.debug(f"Failed to save session summary: {e}")
+        if lifecycle:
+            await lifecycle.notify(SessionEvent(
+                type="restart",
+                agent_name=agent.name,
+                agent_display=agent.display_name,
+                session_id=result.session_id,
+                channel_id=channel_id,
+                previous_session_id=session_id,
+                reason="session rotated by backend",
+            ))
     if result.session_id:
         agent.current_session_id = result.session_id
 
@@ -367,6 +386,18 @@ async def shutdown(sig_name: str):
     global _shutting_down, _socket_handler
     _shutting_down = True
     logger.info(f"Shutting down on {sig_name}...")
+
+    # Save session summaries before shutdown
+    for agent in agents.values():
+        if agent.current_session_id:
+            try:
+                await db.save_session_summary(
+                    agent.current_session_id,
+                    summary="Session ended by hub shutdown.",
+                    ended_cleanly=True,
+                )
+            except Exception as e:
+                logger.debug(f"Failed to save session summary for {agent.name}: {e}")
 
     if health_monitor:
         health_monitor.stop()

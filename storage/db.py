@@ -135,6 +135,20 @@ class Database:
             "UPDATE sessions SET name=? WHERE id=?", (name, id)
         )
 
+    async def save_session_summary(self, id: str, summary: str, ended_cleanly: bool):
+        await self.execute(
+            "UPDATE sessions SET summary=?, ended_cleanly=? WHERE id=?",
+            (summary, 1 if ended_cleanly else 0, id),
+        )
+
+    async def get_previous_session(self, agent_name: str, exclude_id: str = "") -> dict | None:
+        """Get the most recent session for an agent, excluding the current one."""
+        return await self.fetch_one(
+            "SELECT * FROM sessions WHERE agent_name=? AND id != ? AND archived=0 "
+            "ORDER BY created_at DESC LIMIT 1",
+            (agent_name, exclude_id),
+        )
+
     # ── Pins ──
 
     async def create_pin(self, channel_id: str, content: str, pinned_by: str | None):
