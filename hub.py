@@ -31,7 +31,7 @@ from core.thread_dispatch import is_thread_reply, build_background_prompt
 from backends.claude import ClaudeBackend
 from core.session_naming import generate_session_name
 from core.continuity import build_resume_preamble, generate_session_summary
-from features.memory import read_memory, truncate_to_token_limit
+from features.memory import read_memory, truncate_to_token_limit, append_memory
 from features.transcript import fetch_transcript, summarize_for_onboarding
 from features.files import download_slack_files, build_file_annotation, extract_file_paths
 from features.permalinks import expand_permalinks
@@ -376,6 +376,20 @@ async def run_agent_query(agent, text, channel_id, thread_ts, is_background=Fals
                 backend=agent.backend.name,
             )
             await db.update_session_name(result.session_id, session_name)
+
+    # Auto-save session summary to agent MEMORY.md
+    if result.success and result.text:
+        try:
+            summary = generate_session_summary(result.text, max_length=300)
+            if summary:
+                session_name = None
+                if result.session_id:
+                    session_rec = await db.get_session(result.session_id)
+                    session_name = session_rec.get("name") if session_rec else None
+                header = f"## Session: {session_name or 'unnamed'}"
+                append_memory(agent.config.cwd, f"\n{header}\n{summary}\n")
+        except Exception as e:
+            logger.debug(f"Auto-save to memory failed: {e}")
 
     # Auto-upload referenced files
     if result.success and result.text:
