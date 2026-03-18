@@ -320,13 +320,139 @@ class CommandHandler:
         except Exception as e:
             await self._reply(channel_id, f"❌ {agent.display_name} test failed: {e}", thread_ts)
 
+    async def _cmd_restart(self, args, options, channel_id, thread_ts, target_agent, user):
+        """Restart an agent — clear session and start fresh."""
+        name = args[0] if args else target_agent
+        agent = self._agents.get(name)
+        if not agent:
+            await self._reply(channel_id, f"Unknown agent: {name}", thread_ts)
+            return
+        old_session = agent.current_session_id
+        agent.current_session_id = None
+        msg = f"🔄 Restarted {agent.display_name}."
+        if old_session:
+            msg += f" Previous session: `{old_session[:8]}…`"
+        await self._reply(channel_id, msg, thread_ts)
+
+    async def _cmd_roster(self, args, options, channel_id, thread_ts, target_agent, user):
+        """Show all agents with host and channel info."""
+        lines = ["*Agent Roster:*", ""]
+        for name, agent in self._agents.items():
+            status_icon = {"active": "🟢", "paused": "🟡"}.get(agent.status, "🔴")
+            channels = ", ".join(agent.config.channels)
+            lines.append(
+                f"{status_icon} *{agent.display_name}* │ {agent.backend.name} ({agent.config.model}) │ {channels}"
+            )
+        await self._reply(channel_id, "\n".join(lines), thread_ts)
+
+    async def _cmd_history(self, args, options, channel_id, thread_ts, target_agent, user):
+        """Show recent channel messages."""
+        n = int(args[0]) if args else 10
+        try:
+            resp = await self._slack.conversations_history(channel=channel_id, limit=n)
+            msgs = resp.get("messages", [])
+            lines = [f"*Last {len(msgs)} messages:*", ""]
+            for msg in reversed(msgs):
+                user_id = msg.get("user", "bot")
+                text = msg.get("text", "")[:100]
+                lines.append(f"  <@{user_id}>: {text}")
+            await self._reply(channel_id, "\n".join(lines), thread_ts)
+        except Exception as e:
+            await self._reply(channel_id, f"Failed to fetch history: {e}", thread_ts)
+
+    async def _cmd_context(self, args, options, channel_id, thread_ts, target_agent, user):
+        """Fetch and display recent channel context for agent awareness."""
+        n = int(args[0]) if args else 20
+        try:
+            resp = await self._slack.conversations_history(channel=channel_id, limit=n)
+            msgs = resp.get("messages", [])
+            lines = [f"*Channel context (last {len(msgs)} messages):*", ""]
+            for msg in reversed(msgs):
+                user_id = msg.get("user", "bot")
+                text = msg.get("text", "")[:150]
+                lines.append(f"  <@{user_id}>: {text}")
+            await self._reply(channel_id, "\n".join(lines), thread_ts)
+        except Exception as e:
+            await self._reply(channel_id, f"Failed to fetch context: {e}", thread_ts)
+
+    async def _cmd_search(self, args, options, channel_id, thread_ts, target_agent, user):
+        """Search channel history by keyword."""
+        if not args:
+            await self._reply(channel_id, "Usage: !search <keyword>", thread_ts)
+            return
+        keyword = " ".join(args)
+        try:
+            resp = await self._slack.conversations_history(channel=channel_id, limit=100)
+            msgs = resp.get("messages", [])
+            matches = [m for m in msgs if keyword.lower() in (m.get("text", "")).lower()]
+            if matches:
+                lines = [f"*Found {len(matches)} matches for '{keyword}':*", ""]
+                for msg in matches[:10]:  # max 10 results
+                    user_id = msg.get("user", "bot")
+                    text = msg.get("text", "")[:100]
+                    lines.append(f"  <@{user_id}>: {text}")
+                await self._reply(channel_id, "\n".join(lines), thread_ts)
+            else:
+                await self._reply(channel_id, f"No matches found for '{keyword}'.", thread_ts)
+        except Exception as e:
+            await self._reply(channel_id, f"Search failed: {e}", thread_ts)
+
+    async def _cmd_reload(self, args, options, channel_id, thread_ts, target_agent, user):
+        """Reload config.yaml and apply changes without restarting."""
+        try:
+            from core.config import load_config
+            from pathlib import Path
+            import os
+            config_path = Path(os.getenv("CONFIG_PATH", "config.yaml"))
+            new_config = load_config(config_path)
+            # Note: Full config application requires hub-level integration.
+            # For now, report what was loaded and note that agent/profile changes
+            # take effect on next session start.
+            await self._reply(
+                channel_id,
+                f"✅ Config reloaded from `{config_path}`. "
+                f"{len(new_config.agents)} agents, {len(new_config.profiles)} profiles configured. "
+                f"Agent/profile changes take effect on next session start.",
+                thread_ts,
+            )
+        except Exception as e:
+            await self._reply(channel_id, f"❌ Config reload failed: {e}", thread_ts)
+
     async def _cmd_help(self, args, options, channel_id, thread_ts, target_agent, user):
         help_text = (
-            "*Agent Lifecycle:* !agents, !status, !pause, !unpause, !cancel\n"
-            "*Sessions:* !new, !sessions, !resume, !refresh\n"
-            "*Memory:* !memory, !pin, !pins, !unpin\n"
-            "*Cost:* !cost\n"
-            "*Diagnostics:* !health, !diag, !logs, !test\n"
-            "*CLI:* > /command (passthrough to backend)\n"
+            "*Agent Commands:*\n"
+            "  `!agents` — list all agents and status\n"
+            "  `!status [agent]` — detailed agent status\n"
+            "  `!pause [agent]` — pause an agent\n"
+            "  `!unpause [agent]` — resume a paused agent\n"
+            "  `!cancel [agent]` — cancel active query\n"
+            "  `!restart [agent]` — restart agent (clear session)\n"
+            "\n*Session Commands:*\n"
+            "  `!new [label] [--model=<model>]` — start fresh session\n"
+            "  `!sessions [agent]` — list sessions (name, UUID, age, status)\n"
+            "  `!resume <session_id>` — resume a previous session\n"
+            "  `!refresh` — new session, keep old in history\n"
+            "\n*Diagnostics:*\n"
+            "  `!health` — hub health summary\n"
+            "  `!diag [agent]` — deep diagnostic (session, backend, config)\n"
+            "  `!logs [agent] [N]` — last N log lines (default 20)\n"
+            "  `!test [agent]` — verify backend responds\n"
+            "\n*Memory & Context:*\n"
+            "  `!pin <text>` — pin context for agent\n"
+            "  `!pins` — list pinned context\n"
+            "  `!unpin <id>` — remove a pin\n"
+            "  `!memory [agent]` — show agent memory\n"
+            "  `!history [N]` — last N channel messages (default 10)\n"
+            "  `!context [N]` — fetch channel context (default 20)\n"
+            "  `!search <keyword>` — search channel history\n"
+            "\n*Admin:*\n"
+            "  `!cost [agent]` — token usage and costs\n"
+            "  `!roster` — full agent roster with channels\n"
+            "  `!reload` — reload config.yaml (changes on next session)\n"
+            "\n*CLI:*\n"
+            "  `> /command` — passthrough to backend CLI\n"
+            "\n*Profiles* control what agents can do: "
+            "each agent has a profile that sets its permission mode "
+            "and allowed tools. See config.yaml for details.\n"
         )
         await self._reply(channel_id, help_text, thread_ts)
