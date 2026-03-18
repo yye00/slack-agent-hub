@@ -418,6 +418,28 @@ class CommandHandler:
         except Exception as e:
             await self._reply(channel_id, f"❌ Config reload failed: {e}", thread_ts)
 
+    async def _cmd_audit(self, args, options, channel_id, thread_ts, target_agent, user):
+        """Show last N audit log entries. Requires ADMIN level (enforced in hub)."""
+        n = 20
+        if args:
+            try:
+                n = int(args[0])
+            except ValueError:
+                pass
+        entries = await self._db.get_audit_log(limit=n)
+        if not entries:
+            await self._reply(channel_id, "No audit log entries.", thread_ts)
+            return
+        lines = [f"*Audit log (last {n}):*", ""]
+        for e in entries:
+            ts = e.get("timestamp", "")[:19].replace("T", " ")
+            target = e.get("target") or "-"
+            detail = e.get("detail") or ""
+            lines.append(
+                f"  `{ts}` <@{e['user_id']}> {e['action']} `{target}` {detail}"
+            )
+        await self._reply(channel_id, "\n".join(lines), thread_ts)
+
     async def _cmd_help(self, args, options, channel_id, thread_ts, target_agent, user):
         help_text = (
             "*Agent Commands:*\n"
@@ -449,6 +471,7 @@ class CommandHandler:
             "  `!cost [agent]` — token usage and costs\n"
             "  `!roster` — full agent roster with channels\n"
             "  `!reload` — reload config.yaml (changes on next session)\n"
+            "  `!audit [N]` — show last N audit log entries (default 20, admin only)\n"
             "\n*CLI:*\n"
             "  `> /command` — passthrough to backend CLI\n"
             "\n*Profiles* control what agents can do: "

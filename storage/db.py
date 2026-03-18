@@ -187,6 +187,28 @@ class Database:
             (agent_name,),
         )
 
+    # ── Audit log ──
+
+    async def log_audit(
+        self,
+        user_id: str,
+        action: str,
+        target: str | None,
+        channel_id: str | None,
+        detail: str | None,
+    ):
+        await self.execute(
+            "INSERT INTO audit_log (user_id, action, target, channel_id, detail, timestamp) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (user_id, action, target, channel_id, detail, self._now()),
+        )
+
+    async def get_audit_log(self, limit: int = 50) -> list[dict]:
+        return await self.fetch_all(
+            "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?",
+            (limit,),
+        )
+
     # ── Registry KV ──
 
     async def set_registry(self, key: str, value: str):

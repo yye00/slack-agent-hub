@@ -24,6 +24,7 @@ from core.config import load_config
 from core.heartbeat import TipRotator
 from core.query import QueryEngine
 from core.router import Router, RouteAction
+from core.permissions import PermissionChecker
 from core.selftest import StartupSelfTest
 from core.thread_dispatch import is_thread_reply, build_background_prompt
 from backends.claude import ClaudeBackend
@@ -59,6 +60,7 @@ agents: dict[str, Agent] = {}
 router: Router = None
 command_handler: CommandHandler = None
 channel_id_map: dict[str, str] = {}  # "#name" -> "C123..."
+permission_checker: PermissionChecker | None = None
 lifecycle: LifecycleNotifier | None = None
 health_monitor: HealthMonitor | None = None
 _shutting_down = False
@@ -185,8 +187,23 @@ async def handle_message(event, say):
         return
 
     if result.action == RouteAction.COMMAND:
+        cmd = result.parsed.command
+        if permission_checker and not permission_checker.check_command(user, cmd):
+            await poster.post(
+                channel=channel_id,
+                text=permission_checker.denial_message(user, cmd),
+                thread_ts=thread_ts,
+            )
+            return
+        await db.log_audit(
+            user_id=user,
+            action="COMMAND",
+            target=cmd,
+            channel_id=channel_id,
+            detail=text[:500],
+        )
         await command_handler.handle(
-            result.parsed.command, result.parsed.args, result.parsed.options,
+            cmd, result.parsed.args, result.parsed.options,
             channel_id, thread_ts, result.target_agent, user,
         )
         return
@@ -199,8 +216,22 @@ async def handle_message(event, say):
         return
 
     if result.action == RouteAction.CLI_PASSTHROUGH:
+        if permission_checker and not permission_checker.check_cli_passthrough(user):
+            await poster.post(
+                channel=channel_id,
+                text=permission_checker.cli_denial_message(user),
+                thread_ts=thread_ts,
+            )
+            return
         agent = agents.get(result.target_agent)
         if agent:
+            await db.log_audit(
+                user_id=user,
+                action="CLI_PASSTHROUGH",
+                target=result.target_agent,
+                channel_id=channel_id,
+                detail=result.parsed.cli_command[:500],
+            )
             response = await agent.backend.cli_passthrough(
                 agent.current_session_id or "", result.parsed.cli_command
             )
@@ -420,7 +451,7 @@ async def shutdown(sig_name: str):
 
 async def main():
     """Main entry point."""
-    global config, db, app, poster
+    global config, db, app, poster, permission_checker
 
     config_path = Path(os.getenv("CONFIG_PATH", "config.yaml"))
     config = load_config(config_path)
@@ -428,6 +459,8 @@ async def main():
     db_path = Path(os.getenv("DB_PATH", "hub.db"))
     db = Database(db_path)
     await db.initialize()
+
+    permission_checker = PermissionChecker(config.permissions)
 
     app = AsyncApp(token=os.environ["SLACK_BOT_TOKEN"])
     app.event("message")(handle_message)
