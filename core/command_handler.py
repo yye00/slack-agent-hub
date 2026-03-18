@@ -110,9 +110,10 @@ class CommandHandler:
             if sessions:
                 lines = []
                 for s in sessions:
+                    session_name = f" {s['name']}" if s.get("name") else ""
                     label = f" [{s['label']}]" if s.get("label") else ""
                     model = f" ({s['model']})" if s.get("model") else ""
-                    lines.append(f"  {s['id'][:8]}{label}{model} — {s.get('created_at', '?')}")
+                    lines.append(f"  {s['id'][:8]}{session_name}{label}{model} — {s.get('created_at', '?')}")
                 text = f"Sessions for {name}:\n" + "\n".join(lines)
             else:
                 text = f"No sessions for {name}."

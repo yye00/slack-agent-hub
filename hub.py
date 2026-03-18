@@ -26,6 +26,7 @@ from core.router import Router, RouteAction
 from core.selftest import StartupSelfTest
 from core.thread_dispatch import is_thread_reply, build_background_prompt
 from backends.claude import ClaudeBackend
+from core.session_naming import generate_session_name
 from features.memory import read_memory, truncate_to_token_limit
 from features.transcript import fetch_transcript, summarize_for_onboarding
 from features.files import download_slack_files, build_file_annotation, extract_file_paths
@@ -299,6 +300,21 @@ async def run_agent_query(agent, text, channel_id, thread_ts, is_background=Fals
         ))
     if result.session_id:
         agent.current_session_id = result.session_id
+
+    # Persist session record and generate name on first query
+    if result.session_id:
+        existing = await db.get_session(result.session_id)
+        if not existing:
+            session_name = generate_session_name(text)
+            await db.create_session(
+                id=result.session_id,
+                agent_name=agent.name,
+                thread_ts=thread_ts,
+                label=None,
+                model=agent.config.model,
+                backend=agent.backend.name,
+            )
+            await db.update_session_name(result.session_id, session_name)
 
     # Auto-upload referenced files
     if result.success and result.text:

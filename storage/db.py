@@ -25,11 +25,31 @@ class Database:
             await self._conn.close()
 
     async def _run_migrations(self):
-        """Run all SQL migration files in order."""
+        """Run SQL migration files in order, skipping already-applied ones."""
+        # Ensure registry table exists before we try to track migrations in it
+        await self._conn.executescript(
+            "CREATE TABLE IF NOT EXISTS registry (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+        )
+
         migration_files = sorted(MIGRATIONS_DIR.glob("*.sql"))
         for mf in migration_files:
+            key = f"migration:{mf.name}"
+            cursor = await self._conn.execute(
+                "SELECT value FROM registry WHERE key=?", (key,)
+            )
+            row = await cursor.fetchone()
+            if row:
+                continue  # Already applied
+
             sql = mf.read_text()
             await self._conn.executescript(sql)
+
+            timestamp = datetime.now(timezone.utc).isoformat()
+            await self._conn.execute(
+                "INSERT INTO registry (key, value) VALUES (?, ?)",
+                (key, timestamp),
+            )
+            await self._conn.commit()
 
     def _now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -108,6 +128,11 @@ class Database:
     async def update_session_last_active(self, id: str):
         await self.execute(
             "UPDATE sessions SET last_active=? WHERE id=?", (self._now(), id)
+        )
+
+    async def update_session_name(self, id: str, name: str):
+        await self.execute(
+            "UPDATE sessions SET name=? WHERE id=?", (name, id)
         )
 
     # ── Pins ──
