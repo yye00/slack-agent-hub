@@ -34,11 +34,13 @@ class Router:
         channel_agents: dict[str, list[str]],
         agent_hosts: dict[str, str],
         local_agents: set[str],
+        local_host_id: str = "",
     ):
         self._ops_channel_id = ops_channel_id
         self._channel_agents = channel_agents
         self._agent_hosts = agent_hosts
         self._local_agents = local_agents
+        self._local_host_id = local_host_id
         self._all_agent_names = {name.lower() for name in agent_hosts}
 
     def route(self, text: str, channel_id: str, user_id: str) -> RouteResult:
@@ -71,16 +73,41 @@ class Router:
             return RouteResult(action=RouteAction.BROADCAST, parsed=parsed, broadcast_agents=list(agents_in_channel))
 
         if parsed.type == MessageType.PLAIN_TEXT:
-            addressed = self._detect_direct_address(parsed.text, agents_in_channel)
-            if addressed:
-                return RouteResult(action=RouteAction.AGENT_QUERY, parsed=parsed, target_agent=addressed)
+            agent_name, should_ignore = self._detect_direct_address(parsed.text, agents_in_channel)
+            if should_ignore:
+                return RouteResult(action=RouteAction.IGNORE, parsed=parsed)
+            if agent_name:
+                return RouteResult(action=RouteAction.AGENT_QUERY, parsed=parsed, target_agent=agent_name)
+            if self._is_multi_host_channel(channel_id):
+                return RouteResult(action=RouteAction.IGNORE, parsed=parsed)
             return RouteResult(action=RouteAction.AGENT_QUERY, parsed=parsed, target_agent=default_agent)
 
         return RouteResult(action=RouteAction.IGNORE, parsed=parsed)
 
-    def _detect_direct_address(self, text: str, channel_agents: list[str]) -> str | None:
+    def _is_multi_host_channel(self, channel_id: str) -> bool:
+        agents = self._channel_agents.get(channel_id, [])
+        hosts = {self._agent_hosts.get(a, "") for a in agents}
+        return len(hosts) > 1
+
+    def _detect_direct_address(self, text: str, channel_agents: list[str]) -> tuple[str | None, bool]:
+        # Check name@host format first
+        m = re.match(r"^(\w+)@([\w-]+)[,:\s]", text, re.IGNORECASE)
+        if m:
+            name = m.group(1).lower()
+            host = m.group(2)
+            if name in self._all_agent_names:
+                if host == self._local_host_id and name in self._local_agents:
+                    return (name, False)
+                return (None, True)
+
+        # Check plain name format — only match local agents
         for agent_name in channel_agents:
+            if agent_name not in self._local_agents:
+                continue
             pattern = re.compile(rf"^{re.escape(agent_name)}[,:\s]", re.IGNORECASE)
             if pattern.match(text):
-                return agent_name
-        return None
+                return (agent_name, False)
+        return (None, False)
+
+    def get_channel_agents(self, channel_id: str) -> list[str]:
+        return self._channel_agents.get(channel_id, [])

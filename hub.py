@@ -54,6 +54,7 @@ router: Router = None
 command_handler: CommandHandler = None
 channel_id_map: dict[str, str] = {}  # "#name" -> "C123..."
 _shutting_down = False
+_socket_handler = None
 
 # ── Backend registry ──
 
@@ -94,6 +95,10 @@ async def initialize_agents():
 
         backend = backend_cls()
         profile = config.profiles[agent_cfg.profile]
+
+        # Set permission mode from profile on the backend
+        if hasattr(backend, '_permission_mode'):
+            backend._permission_mode = profile.permission_mode
 
         agent = Agent(
             name=name,
@@ -138,6 +143,7 @@ async def initialize_agents():
         channel_agents=channel_agents,
         agent_hosts=agent_hosts,
         local_agents=local_agents,
+        local_host_id=config.host_id,
     )
 
     global command_handler
@@ -310,7 +316,7 @@ async def announce_agents():
 
 async def shutdown(sig_name: str):
     """Graceful shutdown."""
-    global _shutting_down
+    global _shutting_down, _socket_handler
     _shutting_down = True
     logger.info(f"Shutting down on {sig_name}...")
 
@@ -318,6 +324,13 @@ async def shutdown(sig_name: str):
     for agent in agents.values():
         if agent._active_query_task and not agent._active_query_task.done():
             agent._active_query_task.cancel()
+
+    # Close Socket Mode handler to unblock start_async()
+    if _socket_handler:
+        try:
+            await _socket_handler.close_async()
+        except Exception as e:
+            logger.debug(f"Socket handler close error: {e}")
 
     await db.close()
     logger.info("Shutdown complete.")
@@ -336,6 +349,7 @@ async def main():
 
     app = AsyncApp(token=os.environ["SLACK_BOT_TOKEN"])
     app.event("message")(handle_message)
+    app.event("app_mention")(handle_message)  # treat @mentions same as messages
 
     poster = SlackPoster(
         client=app.client,
@@ -354,8 +368,9 @@ async def main():
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, lambda s=sig: asyncio.create_task(shutdown(s.name)))
 
-    handler = AsyncSocketModeHandler(app, os.environ["SLACK_APP_TOKEN"])
-    await handler.start_async()
+    global _socket_handler
+    _socket_handler = AsyncSocketModeHandler(app, os.environ["SLACK_APP_TOKEN"])
+    await _socket_handler.start_async()
 
 
 if __name__ == "__main__":
