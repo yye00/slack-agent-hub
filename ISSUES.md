@@ -82,32 +82,45 @@ Subprocess-based adapter for OpenAI Codex CLI. Interface defined in `backends/ba
 ## Tier 3 — Nice to have
 
 ### 18. Session export/import
-Save/load session state across hosts.
+**Status:** Done (2026-03-18)
+`!export [session_id]` dumps session state as JSON. `!import` accepts JSON payload to restore a session into the local DB. Supports cross-host session migration.
 
 ### 19. Session branching/forking
-Fork a session at a specific point for experimentation.
+**Status:** Done (2026-03-18)
+`!fork [session_id]` creates a new session with copied metadata from the source. Fork does not set current session — user must `!resume` explicitly to avoid orphan backend state.
 
 ### 20. Per-user permissions / audit log
-Schema placeholder exists in config. Not enforced.
+**Status:** Done (2026-03-18)
+`core/permissions.py` provides `PermissionChecker` with `PermLevel` enum (ADMIN, OPS, USER). Default command mappings enforce access on `!reload`/`!audit` (ADMIN), diagnostics (OPS). `log_audit()` writes to `audit_log` table. `!audit [N]` shows recent audit entries. Migration 004 creates audit_log table.
 
 ### 21. Rate limiting
-Prevent abuse of expensive operations.
+**Status:** Done (2026-03-18)
+`core/rate_limit.py` implements token bucket `RateLimiter` with per-user buckets. Configurable `max_queries_per_user` and `refill_per_sec` in `config.yaml`. `max_tokens=0` disables limiting. Checked before AGENT_QUERY dispatch in hub.py.
 
 ### 22. Monitor web UI / webhook alerts
-External notification channels beyond Slack.
+**Status:** Not implemented
+External notification channels beyond Slack. Requires separate design phase.
 
 ### 23. Auto-save to memory
-Automatically append session summaries to agent MEMORY.md.
+**Status:** Done (2026-03-18)
+After successful queries, `hub.py` generates a session summary via `generate_session_summary()` and appends it to the agent's `MEMORY.md` via `append_memory()`. Includes session name header. Non-fatal — failures logged at debug level.
 
 ### 24. Structured logging / log rotation
-Currently logs to stdout. Need structured JSON logging and rotation for production.
+**Status:** Done (2026-03-18)
+`core/structured_logging.py` provides `JsonFormatter` (single-line JSON) and `setup_logging()`. Configures stdout handler + `RotatingFileHandler` (10 MB, 5 backups, always JSON). Controlled via `JSON_LOGS` and `LOG_LEVEL` env vars.
 
 ### 25. Multi-workspace support
-Single orchestrator serving multiple Slack workspaces.
+**Status:** Not implemented
+Single orchestrator serving multiple Slack workspaces. Requires separate design phase.
 
 ---
 
 ## Recently Fixed
+- ✅ Session export/import and forking via !export, !import, !fork (2026-03-18)
+- ✅ Structured JSON logging with rotation (2026-03-18)
+- ✅ Auto-save session summaries to agent MEMORY.md (2026-03-18)
+- ✅ Token bucket rate limiting per user (2026-03-18)
+- ✅ Per-user permissions with audit log and !audit command (2026-03-18)
 - ✅ Named sessions with auto-generated kebab-case names (2026-03-18)
 - ✅ Cost tracking wired from backend events to cost_log DB (2026-03-18)
 - ✅ Hub health monitoring with periodic heartbeat and anomaly alerts (2026-03-18)
