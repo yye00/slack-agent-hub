@@ -21,6 +21,7 @@ from core.command_handler import CommandHandler
 from core.health import HealthMonitor
 from core.commands import MessageType
 from core.config import load_config
+from core.rate_limit import RateLimiter
 from core.heartbeat import TipRotator
 from core.query import QueryEngine
 from core.router import Router, RouteAction
@@ -61,6 +62,7 @@ router: Router = None
 command_handler: CommandHandler = None
 channel_id_map: dict[str, str] = {}  # "#name" -> "C123..."
 permission_checker: PermissionChecker | None = None
+rate_limiter: RateLimiter | None = None
 lifecycle: LifecycleNotifier | None = None
 health_monitor: HealthMonitor | None = None
 _shutting_down = False
@@ -209,6 +211,13 @@ async def handle_message(event, say):
         return
 
     if result.action == RouteAction.AGENT_QUERY:
+        if rate_limiter and not rate_limiter.allow(user):
+            await poster.post(
+                channel=channel_id,
+                text="⏱️ Rate limit reached. Try again shortly.",
+                thread_ts=thread_ts,
+            )
+            return
         agent = agents.get(result.target_agent)
         if agent and agent.status == "active":
             is_bg = is_thread_reply(event)
@@ -451,7 +460,7 @@ async def shutdown(sig_name: str):
 
 async def main():
     """Main entry point."""
-    global config, db, app, poster, permission_checker
+    global config, db, app, poster, permission_checker, rate_limiter
 
     config_path = Path(os.getenv("CONFIG_PATH", "config.yaml"))
     config = load_config(config_path)
@@ -461,6 +470,10 @@ async def main():
     await db.initialize()
 
     permission_checker = PermissionChecker(config.permissions)
+    rate_limiter = RateLimiter(
+        max_tokens=config.rate_limit.max_queries_per_user,
+        refill_per_sec=config.rate_limit.refill_per_sec,
+    )
 
     app = AsyncApp(token=os.environ["SLACK_BOT_TOKEN"])
     app.event("message")(handle_message)

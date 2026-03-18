@@ -51,6 +51,12 @@ class PermissionsConfig:
 
 
 @dataclass
+class RateLimitConfig:
+    max_queries_per_user: int = 10
+    refill_per_sec: float = 0.5
+
+
+@dataclass
 class HubConfig:
     host_id: str
     host_name: str
@@ -64,6 +70,7 @@ class HubConfig:
     transcript: TranscriptConfig
     permissions: PermissionsConfig
     host_color: str = "#4A90E2"
+    rate_limit: RateLimitConfig = field(default_factory=RateLimitConfig)
 
 
 def load_config(path: Path) -> HubConfig:
@@ -96,6 +103,7 @@ def load_config(path: Path) -> HubConfig:
     mon_raw = raw.get("monitors", {})
     tr_raw = raw.get("transcript", {})
     perm_raw = raw.get("permissions", {})
+    rl_raw = raw.get("rate_limit", {})
 
     hostname = socket.gethostname()
     return HubConfig(
@@ -111,4 +119,5 @@ def load_config(path: Path) -> HubConfig:
         transcript=TranscriptConfig(**tr_raw),
         permissions=PermissionsConfig(**perm_raw),
         host_color=raw.get("host_color", "#4A90E2"),
+        rate_limit=RateLimitConfig(**rl_raw),
     )
