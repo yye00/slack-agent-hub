@@ -18,6 +18,7 @@ from slack_bolt.async_app import AsyncApp
 from core.agent import Agent
 from core.lifecycle import LifecycleNotifier, SessionEvent
 from core.command_handler import CommandHandler
+from core.health import HealthMonitor
 from core.commands import MessageType
 from core.config import load_config
 from core.heartbeat import TipRotator
@@ -58,6 +59,7 @@ router: Router = None
 command_handler: CommandHandler = None
 channel_id_map: dict[str, str] = {}  # "#name" -> "C123..."
 lifecycle: LifecycleNotifier | None = None
+health_monitor: HealthMonitor | None = None
 _shutting_down = False
 _selftest_passed = False
 _socket_handler = None
@@ -366,6 +368,9 @@ async def shutdown(sig_name: str):
     _shutting_down = True
     logger.info(f"Shutting down on {sig_name}...")
 
+    if health_monitor:
+        health_monitor.stop()
+
     # Cancel active queries
     for agent in agents.values():
         if agent._active_query_task and not agent._active_query_task.done():
@@ -433,6 +438,16 @@ async def main():
 
     await initialize_agents()
     await announce_agents()
+
+    global health_monitor
+    health_monitor = HealthMonitor(
+        agents=agents,
+        poster=poster,
+        ops_channel_id=ops_id,
+        host_id=config.host_id,
+        interval_secs=300,
+    )
+    health_monitor.start()
 
     logger.info(f"Hub {config.host_id} starting with {len(agents)} agent(s)")
 

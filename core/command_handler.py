@@ -243,12 +243,90 @@ class CommandHandler:
             text = f"Cost for {name}: {total_in:,} input, {total_out:,} output tokens"
             await self._reply(channel_id, text, thread_ts)
 
+    async def _cmd_health(self, args, options, channel_id, thread_ts, target_agent, user):
+        from core.health import build_health_report
+        host_id = self._get_host_id()
+        report = build_health_report(self._agents, host_id=host_id)
+        await self._reply(channel_id, report, thread_ts)
+
+    def _get_host_id(self) -> str:
+        """Get host_id from any agent."""
+        for agent in self._agents.values():
+            return agent.host_id
+        return "unknown"
+
+    async def _cmd_diag(self, args, options, channel_id, thread_ts, target_agent, user):
+        name = args[0] if args else target_agent
+        agent = self._agents.get(name)
+        if not agent:
+            await self._reply(channel_id, f"Unknown agent: {name}", thread_ts)
+            return
+        session = agent.current_session_id or "none"
+        query_active = bool(agent._active_query_task and not agent._active_query_task.done())
+        stderr = getattr(agent.backend, 'last_stderr', 'N/A')
+        text = (
+            f"*Diagnostics for {agent.display_name}*\n"
+            f"Status: {agent.status}\n"
+            f"Backend: {agent.backend.name} ({agent.config.model})\n"
+            f"Session: `{session}`\n"
+            f"Query active: {'yes' if query_active else 'no'}\n"
+            f"CWD: {agent.config.cwd}\n"
+            f"Profile: {agent.config.profile} ({agent.profile.permission_mode})\n"
+            f"Recent stderr:\n```\n{stderr}\n```"
+        )
+        await self._reply(channel_id, text, thread_ts)
+
+    async def _cmd_logs(self, args, options, channel_id, thread_ts, target_agent, user):
+        name = args[0] if args else target_agent
+        agent = self._agents.get(name)
+        if not agent:
+            await self._reply(channel_id, f"Unknown agent: {name}", thread_ts)
+            return
+        stderr = getattr(agent.backend, 'last_stderr', 'No logs available.')
+        n = int(args[1]) if len(args) > 1 else 20
+        lines = stderr.split("\n")[-n:]
+        text = (
+            f"*Recent logs for {agent.display_name}* (last {len(lines)} lines):\n"
+            f"```\n" + "\n".join(lines) + "\n```"
+        )
+        await self._reply(channel_id, text, thread_ts)
+
+    async def _cmd_test(self, args, options, channel_id, thread_ts, target_agent, user):
+        name = args[0] if args else target_agent
+        agent = self._agents.get(name)
+        if not agent:
+            await self._reply(channel_id, f"Unknown agent: {name}", thread_ts)
+            return
+        if not agent.current_session_id:
+            await self._reply(
+                channel_id,
+                f"⚠️ {agent.display_name} has no active session. Send a message first.",
+                thread_ts,
+            )
+            return
+        await self._reply(channel_id, f"🧪 Testing {agent.display_name}...", thread_ts)
+        try:
+            parts = []
+            async for event in agent.backend.query(
+                session_id=agent.current_session_id,
+                prompt="respond with 'ok' and nothing else",
+            ):
+                if event.type == "text":
+                    parts.append(event.content)
+                elif event.type == "complete":
+                    break
+            response = "".join(parts) or "(no response)"
+            await self._reply(channel_id, f"✅ {agent.display_name} responded: {response[:200]}", thread_ts)
+        except Exception as e:
+            await self._reply(channel_id, f"❌ {agent.display_name} test failed: {e}", thread_ts)
+
     async def _cmd_help(self, args, options, channel_id, thread_ts, target_agent, user):
         help_text = (
             "*Agent Lifecycle:* !agents, !status, !pause, !unpause, !cancel\n"
             "*Sessions:* !new, !sessions, !resume, !refresh\n"
             "*Memory:* !memory, !pin, !pins, !unpin\n"
             "*Cost:* !cost\n"
+            "*Diagnostics:* !health, !diag, !logs, !test\n"
             "*CLI:* > /command (passthrough to backend)\n"
         )
         await self._reply(channel_id, help_text, thread_ts)
