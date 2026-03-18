@@ -38,17 +38,17 @@ from features.permalinks import expand_permalinks
 from slack_io.messages import chunk_response
 from slack_io.posting import SlackPoster
 from storage.db import Database
+from core.structured_logging import setup_logging
 
 # ── Logging ──
 
 os.makedirs("logs", exist_ok=True)
-logging.basicConfig(
+json_logs = os.getenv("JSON_LOGS", "").lower() in ("1", "true", "yes")
+setup_logging(
+    log_dir="logs",
+    json_stdout=json_logs,
     level=os.getenv("LOG_LEVEL", "INFO"),
-    format="%(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
 )
-logging.getLogger("slack_bolt").setLevel(logging.WARNING)
-logging.getLogger("slack_sdk").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 # ── Globals ──
