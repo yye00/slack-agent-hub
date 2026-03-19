@@ -220,6 +220,15 @@ async def handle_message(event, say):
                 thread_ts=thread_ts,
             )
             return
+        # Handle file attachments
+        files = event.get("files", [])
+        if files:
+            try:
+                downloaded = await download_slack_files(app.client, files, channel_id)
+                if downloaded:
+                    text += build_file_annotation(downloaded)
+            except Exception as e:
+                logger.debug(f"File download failed: {e}")
         agent = agents.get(result.target_agent)
         if agent and agent.status == "active":
             is_bg = is_thread_reply(event)
@@ -342,8 +351,8 @@ async def run_agent_query(agent, text, channel_id, thread_ts, is_background=Fals
         session_id=session_id,
     )
 
-    # Update session tracking — detect restarts
-    if result.session_id and result.session_id != session_id:
+    # Update session tracking — detect restarts (skip if initial session creation)
+    if result.session_id and session_id and result.session_id != session_id:
         # Save summary for the old session before marking it rotated
         if session_id:
             try:
@@ -395,16 +404,19 @@ async def run_agent_query(agent, text, channel_id, thread_ts, is_background=Fals
 
     # Auto-upload referenced files
     if result.success and result.text:
-        paths = extract_file_paths(result.text)
+        paths = list(dict.fromkeys(extract_file_paths(result.text)))  # deduplicate
+        logger.info(f"Auto-upload: found {len(paths)} file paths in response")
         for p in paths[:5]:  # max 5 auto-uploads
             try:
+                logger.info(f"Auto-uploading {p} to {channel_id}")
                 await app.client.files_upload_v2(
                     channel=channel_id,
                     file=p,
                     thread_ts=thread_ts,
                 )
+                logger.info(f"Auto-uploaded {p}")
             except Exception as e:
-                logger.debug(f"Auto-upload failed for {p}: {e}")
+                logger.warning(f"Auto-upload failed for {p}: {e}")
 
 
 async def announce_agents():

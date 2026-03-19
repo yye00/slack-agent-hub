@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import re
 from dataclasses import dataclass, field
 from enum import Enum, auto
@@ -37,7 +38,7 @@ _OPTION_RE = re.compile(r"--(\w+)\s+(\S+)")
 
 def parse_message(text: str) -> ParsedCommand:
     """Parse a Slack message into a structured command."""
-    text = text.strip()
+    text = html.unescape(text).strip()
 
     m = _CLI_PASSTHROUGH_RE.match(text)
     if m:

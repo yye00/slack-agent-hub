@@ -1,6 +1,7 @@
 """Claude CLI backend adapter using claude-agent-sdk."""
 
-import asyncio
+import logging
+import os
 from collections.abc import AsyncIterator
 
 from claude_agent_sdk import ClaudeAgentOptions, query as claude_query
@@ -12,6 +13,25 @@ from claude_agent_sdk.types import (
 )
 
 from backends.base import Backend, CommandInfo, Event, SessionInfo
+
+logger = logging.getLogger(__name__)
+
+# Env vars that prevent Claude from running inside another Claude session
+_NESTING_VARS = {"CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SESSION"}
+
+
+def _clean_env() -> dict[str, str]:
+    """Return env overrides that suppress nesting detection.
+
+    The SDK merges os.environ with options.env, so we must explicitly
+    blank out the nesting vars rather than omitting them.
+    """
+    return {k: "" for k in _NESTING_VARS}
+
+
+def _stderr_handler(line: str) -> None:
+    """Log stderr from the Claude CLI subprocess."""
+    logger.info(f"claude-cli stderr: {line.rstrip()}")
 
 
 class ClaudeBackend(Backend):
@@ -36,6 +56,8 @@ class ClaudeBackend(Backend):
             model=model,
             system_prompt=system_prompt,
             cwd=cwd,
+            env=_clean_env(),
+            stderr=_stderr_handler,
         )
         return ""  # Will be populated by first query
 
@@ -43,7 +65,7 @@ class ClaudeBackend(Backend):
         """Resume a Claude session by ID."""
         if not session_id:
             return False
-        self._pending_options = ClaudeAgentOptions(session_id=session_id)
+        self._pending_options = ClaudeAgentOptions(resume=session_id, env=_clean_env(), stderr=_stderr_handler)
         return True
 
     async def query(
@@ -55,20 +77,30 @@ class ClaudeBackend(Backend):
         """Send prompt to Claude and yield events."""
         options = getattr(self, "_pending_options", None)
         if options is None:
-            options = ClaudeAgentOptions(session_id=session_id)
+            # Re-use the last successful options with updated resume
+            last = getattr(self, "_last_options", None)
+            if last and session_id:
+                options = ClaudeAgentOptions(
+                    resume=session_id,
+                    model=last.model,
+                    cwd=last.cwd,
+                    permission_mode=last.permission_mode,
+                    env=_clean_env(),
+                    stderr=_stderr_handler,
+                )
+            else:
+                options = ClaudeAgentOptions(resume=session_id, env=_clean_env(), stderr=_stderr_handler)
 
         if allowed_tools:
             options.allowed_tools = allowed_tools
 
-        options.prompt = prompt
+        # Save for future re-use
+        self._last_options = options
 
         response_text_parts: list[str] = []
         real_session_id = session_id
 
-        # claude_query is synchronous — run in executor to avoid blocking the event loop
-        loop = asyncio.get_event_loop()
-        messages = await loop.run_in_executor(None, lambda: list(claude_query(options)))
-        for message in messages:
+        async for message in claude_query(prompt=prompt, options=options):
             if isinstance(message, AssistantMessage):
                 for block in message.content:
                     if isinstance(block, TextBlock):

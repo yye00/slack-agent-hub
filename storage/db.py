@@ -111,7 +111,15 @@ class Database:
         )
 
     async def get_session(self, id: str) -> dict | None:
-        return await self.fetch_one("SELECT * FROM sessions WHERE id=?", (id,))
+        """Get a session by exact ID or unique prefix match."""
+        row = await self.fetch_one("SELECT * FROM sessions WHERE id=?", (id,))
+        if row:
+            return row
+        # Try prefix match
+        rows = await self.fetch_all(
+            "SELECT * FROM sessions WHERE id LIKE ?", (id + "%",)
+        )
+        return rows[0] if len(rows) == 1 else None
 
     async def list_sessions(self, agent_name: str) -> list[dict]:
         return await self.fetch_all(

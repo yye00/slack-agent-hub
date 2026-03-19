@@ -313,8 +313,6 @@ class CommandHandler:
             ):
                 if event.type == "text":
                     parts.append(event.content)
-                elif event.type == "complete":
-                    break
             response = "".join(parts) or "(no response)"
             await self._reply(channel_id, f"✅ {agent.display_name} responded: {response[:200]}", thread_ts)
         except Exception as e:

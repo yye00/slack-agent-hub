@@ -18,7 +18,7 @@ TEXT_EXTENSIONS = {".txt", ".md", ".prompt", ".rst", ".log", ".py", ".js", ".ts"
 MAX_INLINE_SIZE = 500 * 1024  # 500KB
 MAX_UPLOAD_SIZE = 100 * 1024 * 1024  # 100MB
 SYSTEM_DIRS = {"/etc/", "/sys/", "/proc/", "/dev/"}
-FILE_PATH_RE = re.compile(r"(?:^|\s)((?:/[\w./-]+|~/[\w./-]+)\.\w+)")
+FILE_PATH_RE = re.compile(r"(?:^|[\s`*\"])((?:/[\w./-]+|~/[\w./-]+)\.\w+)")
 
 
 async def download_slack_files(
