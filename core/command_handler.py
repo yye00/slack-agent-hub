@@ -124,9 +124,15 @@ class CommandHandler:
     async def _cmd_cancel(self, args, options, channel_id, thread_ts, target_agent, user):
         name = args[0] if args else target_agent
         agent = self._agents.get(name)
-        if agent and agent._active_query_task:
-            agent._active_query_task.cancel()
+        if not agent:
+            await self._reply(channel_id, f"Unknown agent: {name}", thread_ts)
+            return
+        task = getattr(agent, "_active_query_task", None)
+        if task and not task.done():
+            task.cancel()
             await self._reply(channel_id, f"🛑 Cancelled query for {agent.display_name}.", thread_ts)
+        else:
+            await self._reply(channel_id, f"No active query for {agent.display_name}.", thread_ts)
 
     @staticmethod
     def _format_age(iso_ts: str) -> str:
@@ -298,7 +304,10 @@ class CommandHandler:
             await self._reply(channel_id, f"Unknown agent: {name}", thread_ts)
             return
         stderr = getattr(agent.backend, 'last_stderr', 'No logs available.')
-        n = int(args[1]) if len(args) > 1 else 20
+        try:
+            n = int(args[1]) if len(args) > 1 else 20
+        except ValueError:
+            n = 20
         lines = stderr.split("\n")[-n:]
         text = (
             f"*Recent logs for {agent.display_name}* (last {len(lines)} lines):\n"
@@ -514,21 +523,24 @@ class CommandHandler:
         import uuid
         new_id = str(uuid.uuid4())
         source_label = source.get("name") or args[0][:8]
-        await self._db.create_session(
-            id=new_id,
-            agent_name=source["agent_name"],
-            thread_ts=source.get("thread_ts"),
-            label=f"fork of {source_label}",
-            model=source.get("model"),
-            backend=source.get("backend"),
-        )
-        fork_name = f"fork-{source_label}"
-        await self._db.update_session_name(new_id, fork_name)
-        await self._reply(
-            channel_id,
-            f"🔀 Forked `{args[0][:8]}…` → `{new_id[:8]}…` ({fork_name}). Use `!resume {new_id[:8]}` to switch.",
-            thread_ts,
-        )
+        try:
+            await self._db.create_session(
+                id=new_id,
+                agent_name=source["agent_name"],
+                thread_ts=source.get("thread_ts"),
+                label=f"fork of {source_label}",
+                model=source.get("model"),
+                backend=source.get("backend"),
+            )
+            fork_name = f"fork-{source_label}"
+            await self._db.update_session_name(new_id, fork_name)
+            await self._reply(
+                channel_id,
+                f"🔀 Forked `{args[0][:8]}…` → `{new_id[:8]}…` ({fork_name}). Use `!resume {new_id[:8]}` to switch.",
+                thread_ts,
+            )
+        except Exception as e:
+            await self._reply(channel_id, f"Fork failed: {e}", thread_ts)
 
     async def _cmd_help(self, args, options, channel_id, thread_ts, target_agent, user):
         help_text = (

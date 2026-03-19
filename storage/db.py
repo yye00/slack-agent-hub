@@ -56,17 +56,24 @@ class Database:
 
     # ── Generic query helpers ──
 
+    def _ensure_connected(self):
+        if self._conn is None:
+            raise RuntimeError("Database not initialized or already closed")
+
     async def fetch_one(self, sql: str, params=()) -> dict | None:
+        self._ensure_connected()
         cursor = await self._conn.execute(sql, params)
         row = await cursor.fetchone()
         return dict(row) if row else None
 
     async def fetch_all(self, sql: str, params=()) -> list[dict]:
+        self._ensure_connected()
         cursor = await self._conn.execute(sql, params)
         rows = await cursor.fetchall()
         return [dict(r) for r in rows]
 
     async def execute(self, sql: str, params=()):
+        self._ensure_connected()
         await self._conn.execute(sql, params)
         await self._conn.commit()
 

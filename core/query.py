@@ -152,12 +152,16 @@ class QueryEngine:
 
                 # Overflow chunks as thread replies
                 for chunk in chunks[1:]:
-                    await self._poster.post(
-                        channel=channel_id,
-                        text=chunk,
-                        thread_ts=reply_ts or placeholder_ts,
-                        agent_name=agent.name,
-                    )
+                    try:
+                        await self._poster.post(
+                            channel=channel_id,
+                            text=chunk,
+                            thread_ts=reply_ts or placeholder_ts,
+                            agent_name=agent.name,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to post overflow chunk: {e}")
+                        break
         else:
             # Post error
             error_msg = f"❌ {agent.display_name} error: {result.error}"

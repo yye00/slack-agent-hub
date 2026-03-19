@@ -9,6 +9,7 @@ load_dotenv(override=True)
 
 import asyncio
 import logging
+import re
 import signal
 import sys
 
@@ -165,6 +166,10 @@ async def initialize_agents():
     command_handler = CommandHandler(agents=agents, db=db, slack_client=app.client, poster=poster)
 
 
+_seen_events: set[str] = set()
+_SEEN_MAX = 500
+
+
 async def handle_message(event, say):
     """Main message handler — routes to agents or commands."""
     if _shutting_down:
@@ -172,6 +177,17 @@ async def handle_message(event, say):
 
     if not _selftest_passed:
         return
+
+    # Deduplicate: Slack fires both 'message' and 'app_mention' for @-mentions
+    event_ts = event.get("client_msg_id") or event.get("ts", "")
+    if event_ts in _seen_events:
+        return
+    _seen_events.add(event_ts)
+    if len(_seen_events) > _SEEN_MAX:
+        # Prune oldest half to avoid unbounded growth
+        to_remove = list(_seen_events)[:_SEEN_MAX // 2]
+        for k in to_remove:
+            _seen_events.discard(k)
 
     text = event.get("text", "")
     channel_id = event.get("channel", "")
@@ -185,6 +201,11 @@ async def handle_message(event, say):
     if event.get("bot_id") or event.get("subtype") == "bot_message":
         return
 
+    # Strip bot mention prefix so "@Skippy !help" parses as "!help"
+    text = re.sub(r"<@U[A-Z0-9]+>\s*", "", text).strip()
+    if not text:
+        return
+
     result = router.route(text, channel_id, user)
 
     if result.action == RouteAction.IGNORE:
@@ -192,24 +213,34 @@ async def handle_message(event, say):
 
     if result.action == RouteAction.COMMAND:
         cmd = result.parsed.command
-        if permission_checker and not permission_checker.check_command(user, cmd):
-            await poster.post(
-                channel=channel_id,
-                text=permission_checker.denial_message(user, cmd),
-                thread_ts=thread_ts,
+        try:
+            if permission_checker and not permission_checker.check_command(user, cmd):
+                await poster.post(
+                    channel=channel_id,
+                    text=permission_checker.denial_message(user, cmd),
+                    thread_ts=thread_ts,
+                )
+                return
+            await db.log_audit(
+                user_id=user,
+                action="COMMAND",
+                target=cmd,
+                channel_id=channel_id,
+                detail=text[:500],
             )
-            return
-        await db.log_audit(
-            user_id=user,
-            action="COMMAND",
-            target=cmd,
-            channel_id=channel_id,
-            detail=text[:500],
-        )
-        await command_handler.handle(
-            cmd, result.parsed.args, result.parsed.options,
-            channel_id, thread_ts, result.target_agent, user,
-        )
+            await command_handler.handle(
+                cmd, result.parsed.args, result.parsed.options,
+                channel_id, thread_ts, result.target_agent, user,
+            )
+        except Exception as e:
+            logger.exception(f"Command !{cmd} failed: {e}")
+            try:
+                await poster.post(
+                    channel=channel_id, text=f"❌ Command error: {e}",
+                    thread_ts=thread_ts,
+                )
+            except Exception:
+                pass
         return
 
     if result.action == RouteAction.AGENT_QUERY:
@@ -232,7 +263,13 @@ async def handle_message(event, say):
         agent = agents.get(result.target_agent)
         if agent and agent.status == "active":
             is_bg = is_thread_reply(event)
-            await run_agent_query(agent, text, channel_id, thread_ts, is_background=is_bg)
+            agent._active_query_task = asyncio.create_task(
+                run_agent_query(agent, text, channel_id, thread_ts, is_background=is_bg)
+            )
+            try:
+                await agent._active_query_task
+            finally:
+                agent._active_query_task = None
         return
 
     if result.action == RouteAction.CLI_PASSTHROUGH:
@@ -275,6 +312,25 @@ async def handle_message(event, say):
 
 async def run_agent_query(agent, text, channel_id, thread_ts, is_background=False):
     """Execute a query against an agent."""
+    try:
+        await _run_agent_query_inner(agent, text, channel_id, thread_ts, is_background)
+    except asyncio.CancelledError:
+        raise  # Let cancellation propagate
+    except Exception as e:
+        logger.exception(f"run_agent_query failed: {e}")
+        try:
+            await poster.post(
+                channel=channel_id,
+                text=f"❌ Internal error: {e}",
+                thread_ts=thread_ts,
+                agent_name=agent.name,
+            )
+        except Exception:
+            pass
+
+
+async def _run_agent_query_inner(agent, text, channel_id, thread_ts, is_background=False):
+    """Inner query logic — wrapped by run_agent_query for safety."""
     if is_background and agent.current_session_id:
         text = build_background_prompt(text, agent.backend.name)
 

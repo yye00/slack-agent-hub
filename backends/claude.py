@@ -37,6 +37,10 @@ def _stderr_handler(line: str) -> None:
 class ClaudeBackend(Backend):
     """Adapter for Claude Code CLI via claude-agent-sdk."""
 
+    def __init__(self):
+        super().__init__()
+        self._permission_mode: str = "default"
+
     @property
     def name(self) -> str:
         return "claude"
@@ -56,6 +60,7 @@ class ClaudeBackend(Backend):
             model=model,
             system_prompt=system_prompt,
             cwd=cwd,
+            permission_mode=self._permission_mode,
             env=_clean_env(),
             stderr=_stderr_handler,
         )
@@ -65,7 +70,12 @@ class ClaudeBackend(Backend):
         """Resume a Claude session by ID."""
         if not session_id:
             return False
-        self._pending_options = ClaudeAgentOptions(resume=session_id, env=_clean_env(), stderr=_stderr_handler)
+        self._pending_options = ClaudeAgentOptions(
+            resume=session_id,
+            permission_mode=self._permission_mode,
+            env=_clean_env(),
+            stderr=_stderr_handler,
+        )
         return True
 
     async def query(
@@ -89,7 +99,12 @@ class ClaudeBackend(Backend):
                     stderr=_stderr_handler,
                 )
             else:
-                options = ClaudeAgentOptions(resume=session_id, env=_clean_env(), stderr=_stderr_handler)
+                options = ClaudeAgentOptions(
+                    resume=session_id,
+                    permission_mode=self._permission_mode,
+                    env=_clean_env(),
+                    stderr=_stderr_handler,
+                )
 
         if allowed_tools:
             options.allowed_tools = allowed_tools
@@ -100,40 +115,41 @@ class ClaudeBackend(Backend):
         response_text_parts: list[str] = []
         real_session_id = session_id
 
-        async for message in claude_query(prompt=prompt, options=options):
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        response_text_parts.append(block.text)
-                        yield Event(
-                            type="text",
-                            content=block.text,
-                            raw={"block": "text"},
-                        )
-                    elif isinstance(block, ToolUseBlock):
-                        yield Event(
-                            type="tool_use",
-                            content=block.name,
-                            detail=str(block.input)[:200],
-                            raw={"tool_id": block.id},
-                        )
-            elif isinstance(message, ResultMessage):
-                real_session_id = getattr(message, "session_id", session_id)
-                yield Event(
-                    type="complete",
-                    content="\n".join(response_text_parts),
-                    detail=real_session_id,
-                    raw={
-                        "session_id": real_session_id,
-                        "cost_usd": getattr(message, "total_cost_usd", None),
-                        "duration_ms": getattr(message, "duration_ms", None),
-                        "num_turns": getattr(message, "num_turns", None),
-                        "input_tokens": getattr(message, "input_tokens", None),
-                        "output_tokens": getattr(message, "output_tokens", None),
-                    },
-                )
-
-        self._pending_options = None
+        try:
+            async for message in claude_query(prompt=prompt, options=options):
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            response_text_parts.append(block.text)
+                            yield Event(
+                                type="text",
+                                content=block.text,
+                                raw={"block": "text"},
+                            )
+                        elif isinstance(block, ToolUseBlock):
+                            yield Event(
+                                type="tool_use",
+                                content=block.name,
+                                detail=str(block.input)[:200],
+                                raw={"tool_id": block.id},
+                            )
+                elif isinstance(message, ResultMessage):
+                    real_session_id = getattr(message, "session_id", session_id)
+                    yield Event(
+                        type="complete",
+                        content="\n".join(response_text_parts),
+                        detail=real_session_id,
+                        raw={
+                            "session_id": real_session_id,
+                            "cost_usd": getattr(message, "total_cost_usd", None),
+                            "duration_ms": getattr(message, "duration_ms", None),
+                            "num_turns": getattr(message, "num_turns", None),
+                            "input_tokens": getattr(message, "input_tokens", None),
+                            "output_tokens": getattr(message, "output_tokens", None),
+                        },
+                    )
+        finally:
+            self._pending_options = None
 
     async def cancel(self, session_id: str) -> None:
         """Cancel is handled externally by cancelling the asyncio task."""
