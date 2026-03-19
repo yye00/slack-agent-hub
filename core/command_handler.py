@@ -34,9 +34,14 @@ class CommandHandler:
         self._slack = slack_client
         self._poster = poster
 
-    async def _reply(self, channel_id, text, thread_ts=None):
+    async def _reply(self, channel_id, text, thread_ts=None, agent_name=None):
         """Send a branded reply via the poster."""
-        await self._poster.post(channel=channel_id, text=text, thread_ts=thread_ts)
+        # Use current agent for color if not explicitly provided
+        name = agent_name or getattr(self, "_current_agent", None)
+        await self._poster.post(
+            channel=channel_id, text=text, thread_ts=thread_ts,
+            agent_name=name,
+        )
 
     async def handle(
         self,
@@ -49,6 +54,8 @@ class CommandHandler:
         user: str,
     ):
         """Dispatch a command to the appropriate handler."""
+        # Store target agent for _reply color resolution
+        self._current_agent = target_agent
         handler = getattr(self, f"_cmd_{command}", None)
         if handler:
             await handler(args, options, channel_id, thread_ts, target_agent, user)
@@ -79,13 +86,21 @@ class CommandHandler:
                     session_display = f"{sname} (`{agent.current_session_id[:8]}…`)"
                 else:
                     session_display = f"`{agent.current_session_id[:8]}…`"
+            # Build resume hint
+            resume_hint = ""
+            if agent.current_session_id:
+                resume_cmd = agent.backend.terminal_resume_command(agent.current_session_id)
+                if resume_cmd:
+                    resume_hint = f"\nCLI resume: `{resume_cmd}`"
+
             text = (
                 f"*{agent.display_name}*\n"
                 f"Backend: {agent.backend.name}\n"
                 f"Model: {agent.config.model}\n"
                 f"Profile: {agent.config.profile}\n"
                 f"Status: {agent.status}\n"
-                f"Session: {session_display}\n"
+                f"Session: {session_display}"
+                f"{resume_hint}\n"
                 f"CWD: {agent.config.cwd}"
             )
             await self._reply(channel_id, text, thread_ts)

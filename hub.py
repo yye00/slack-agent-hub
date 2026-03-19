@@ -513,6 +513,14 @@ async def main():
         host_color=config.host_color,
     )
 
+    # Register per-agent colors (explicit from config, or auto-generated)
+    for name, agent_cfg in config.agents.items():
+        if agent_cfg.color:
+            poster.set_agent_color(name, agent_cfg.color)
+        else:
+            # Trigger auto-generation so it's consistent across restarts
+            poster.get_agent_color(name)
+
     await resolve_channel_ids(app.client)
 
     global lifecycle

@@ -23,6 +23,7 @@ class AgentConfig:
     profile: str
     display_name: str = ""
     resume_session: str = ""
+    color: str = ""  # Per-agent sidebar color (hex). Auto-generated if empty.
 
 
 @dataclass

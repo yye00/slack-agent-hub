@@ -118,6 +118,16 @@ class QueryEngine:
             except Exception as e:
                 logger.debug(f"Failed to log cost: {e}")
 
+        # Build footer with session info
+        footer_extra = None
+        if result.session_id:
+            sid = result.session_id[:8]
+            parts = [f"session {sid}"]
+            resume_cmd = agent.backend.terminal_resume_command(result.session_id)
+            if resume_cmd:
+                parts.append(f"`{resume_cmd}`")
+            footer_extra = " │ ".join(parts)
+
         # Update placeholder with response or completion
         if result.success:
             # Post response text
@@ -129,6 +139,7 @@ class QueryEngine:
                         ts=placeholder_ts,
                         text=chunks[0],
                         agent_name=agent.name,
+                        footer_extra=footer_extra,
                     )
                 except Exception:
                     await self._poster.post(
@@ -136,6 +147,7 @@ class QueryEngine:
                         text=chunks[0],
                         thread_ts=reply_ts,
                         agent_name=agent.name,
+                        footer_extra=footer_extra,
                     )
 
                 # Overflow chunks as thread replies
