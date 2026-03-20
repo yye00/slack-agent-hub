@@ -224,14 +224,16 @@ class CommandHandler:
                 await self._reply(channel_id, chunk, thread_ts)
 
     async def _cmd_resume(self, args, options, channel_id, thread_ts, target_agent, user):
-        """Resume a previous session by ID."""
+        """Resume a previous session by ID (supports prefix match)."""
         agent = self._agents.get(target_agent)
         if not agent:
             return
         if not args:
             await self._reply(channel_id, "Usage: !resume <session_id>", thread_ts)
             return
-        session_id = args[0]
+        # Resolve prefix to full session ID via DB
+        session = await self._db.get_session(args[0])
+        session_id = session["id"] if session else args[0]
         ok = await agent.backend.resume_session(session_id)
         if ok:
             agent.current_session_id = session_id
@@ -283,10 +285,11 @@ class CommandHandler:
             await self._reply(channel_id, f"Unknown agent: {name}", thread_ts)
             return
         session = agent.current_session_id or "none"
-        query_active = bool(agent._active_query_task and not agent._active_query_task.done())
+        task = getattr(agent, "_active_query_task", None)
+        query_active = bool(task and not task.done())
         stderr = getattr(agent.backend, 'last_stderr', 'N/A')
         text = (
-            f"*Diagnostics for {agent.display_name}*\n"
+            f"🔍 *Diagnostics for {agent.display_name}*\n"
             f"Status: {agent.status}\n"
             f"Backend: {agent.backend.name} ({agent.config.model})\n"
             f"Session: `{session}`\n"
@@ -310,7 +313,7 @@ class CommandHandler:
             n = 20
         lines = stderr.split("\n")[-n:]
         text = (
-            f"*Recent logs for {agent.display_name}* (last {len(lines)} lines):\n"
+            f"📋 *Recent logs for {agent.display_name}* (last {len(lines)} lines):\n"
             f"```\n" + "\n".join(lines) + "\n```"
         )
         await self._reply(channel_id, text, thread_ts)
@@ -369,11 +372,14 @@ class CommandHandler:
 
     async def _cmd_history(self, args, options, channel_id, thread_ts, target_agent, user):
         """Show recent channel messages."""
-        n = int(args[0]) if args else 10
+        try:
+            n = int(args[0]) if args else 10
+        except ValueError:
+            n = 10
         try:
             resp = await self._slack.conversations_history(channel=channel_id, limit=n)
             msgs = resp.get("messages", [])
-            lines = [f"*Last {len(msgs)} messages:*", ""]
+            lines = [f"📜 *Last {len(msgs)} messages:*", ""]
             for msg in reversed(msgs):
                 user_id = msg.get("user", "bot")
                 text = msg.get("text", "")[:100]
@@ -384,11 +390,14 @@ class CommandHandler:
 
     async def _cmd_context(self, args, options, channel_id, thread_ts, target_agent, user):
         """Fetch and display recent channel context for agent awareness."""
-        n = int(args[0]) if args else 20
+        try:
+            n = int(args[0]) if args else 20
+        except ValueError:
+            n = 20
         try:
             resp = await self._slack.conversations_history(channel=channel_id, limit=n)
             msgs = resp.get("messages", [])
-            lines = [f"*Channel context (last {len(msgs)} messages):*", ""]
+            lines = [f"🔎 *Channel context (last {len(msgs)} messages):*", ""]
             for msg in reversed(msgs):
                 user_id = msg.get("user", "bot")
                 text = msg.get("text", "")[:150]
@@ -408,7 +417,7 @@ class CommandHandler:
             msgs = resp.get("messages", [])
             matches = [m for m in msgs if keyword.lower() in (m.get("text", "")).lower()]
             if matches:
-                lines = [f"*Found {len(matches)} matches for '{keyword}':*", ""]
+                lines = [f"🔍 *Found {len(matches)} matches for '{keyword}':*", ""]
                 for msg in matches[:10]:  # max 10 results
                     user_id = msg.get("user", "bot")
                     text = msg.get("text", "")[:100]
@@ -452,7 +461,7 @@ class CommandHandler:
         if not entries:
             await self._reply(channel_id, "No audit log entries.", thread_ts)
             return
-        lines = [f"*Audit log (last {n}):*", ""]
+        lines = [f"📝 *Audit log (last {n}):*", ""]
         for e in entries:
             ts = e.get("timestamp", "")[:19].replace("T", " ")
             target = e.get("target") or "-"

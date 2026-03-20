@@ -249,6 +249,7 @@ async def handle_message(event, say):
                 channel=channel_id,
                 text="⏱️ Rate limit reached. Try again shortly.",
                 thread_ts=thread_ts,
+                agent_name=result.target_agent,
             )
             return
         # Handle file attachments
