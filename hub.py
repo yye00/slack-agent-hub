@@ -304,10 +304,15 @@ async def handle_message(event, say):
         return
 
     if result.action == RouteAction.BROADCAST:
+        tasks = []
         for agent_name in result.broadcast_agents:
             agent = agents.get(agent_name)
             if agent and agent.status == "active":
-                await run_agent_query(agent, result.parsed.text, channel_id, thread_ts)
+                tasks.append(
+                    run_agent_query(agent, result.parsed.text, channel_id, thread_ts)
+                )
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
         return
 
 
@@ -570,13 +575,19 @@ async def main():
         host_color=config.host_color,
     )
 
-    # Register per-agent colors (explicit from config, or auto-generated)
+    # Register per-agent colors (explicit from config, or evenly spaced)
+    auto_agents = []
     for name, agent_cfg in config.agents.items():
         if agent_cfg.color:
             poster.set_agent_color(name, agent_cfg.color)
         else:
-            # Trigger auto-generation so it's consistent across restarts
-            poster.get_agent_color(name)
+            auto_agents.append(name)
+    # Distribute auto-generated colors evenly across the hue wheel
+    for i, name in enumerate(sorted(auto_agents)):
+        from slack_io.posting import _hsl_to_hex
+        hue = (i / max(len(auto_agents), 1) + 0.05) % 1.0  # offset to avoid pure red
+        color = _hsl_to_hex(hue, 0.55, 0.50)
+        poster.set_agent_color(name, color)
 
     await resolve_channel_ids(app.client)
 
