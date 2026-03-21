@@ -153,6 +153,11 @@ async def initialize_agents():
             if ch_id:
                 channel_agents.setdefault(ch_id, []).append(name)
 
+    # Build display name mapping for routing (so "Ziggy:" routes to "debater")
+    display_names: dict[str, str] = {}
+    for name, agent in agents.items():
+        display_names[name] = agent.display_name
+
     ops_id = resolve_channel(config.ops_channel) or ""
     router = Router(
         ops_channel_id=ops_id,
@@ -160,6 +165,7 @@ async def initialize_agents():
         agent_hosts=agent_hosts,
         local_agents=local_agents,
         local_host_id=config.host_id,
+        display_names=display_names,
     )
 
     global command_handler
@@ -639,11 +645,11 @@ async def announce_agents():
             # Single agent — concise announcement
             name = agent_names[0]
             agent = agents[name]
-            label = agent.config.display_name or name.capitalize()
+            label = agent.display_name
             msg = (
                 f"👋 *{label}* online — "
                 f"`{agent.backend.name}` · `{agent.config.model}` · "
-                f"address as `{name}:` │ `!help` for commands"
+                f"address as `{label}:` │ `!help` for commands"
             )
             try:
                 await poster.post(channel=ch_id, text=msg, agent_name=name)
@@ -654,12 +660,11 @@ async def announce_agents():
             lines = ["👋 *Agents online:*"]
             for name in agent_names:
                 agent = agents[name]
-                label = agent.config.display_name or name.capitalize()
+                label = agent.display_name
                 lines.append(
-                    f"  •  *{label}* — `{agent.backend.name}` · "
-                    f"`{agent.config.model}` · address as `{name}:`"
+                    f"  •  *{label}* — `{agent.backend.name}` · `{agent.config.model}`"
                 )
-            lines.append(f"_Use `Everyone:` to broadcast, `Debate:` for discussion, `!help` for commands_")
+            lines.append(f"_Address by name (e.g. `Skippy:` or `debater:`), `Everyone:` to broadcast, `Debate:` for discussion_")
             try:
                 await poster.post_plain(channel=ch_id, text="\n".join(lines))
             except Exception as e:
