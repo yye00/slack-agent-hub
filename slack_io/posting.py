@@ -52,10 +52,19 @@ class SlackPoster:
         self._host_id = host_id
         self._color = host_color
         self._agent_colors = agent_colors or {}
+        self._agent_display_names: dict[str, str] = {}
 
     def set_agent_color(self, agent_name: str, color: str) -> None:
         """Explicitly set a color for an agent."""
         self._agent_colors[agent_name] = color
+
+    def set_agent_display_name(self, agent_name: str, display_name: str) -> None:
+        """Register a display name for an agent (used in footers)."""
+        self._agent_display_names[agent_name] = display_name
+
+    def get_display_name(self, agent_name: str) -> str:
+        """Get the display name for an agent, falling back to capitalized internal name."""
+        return self._agent_display_names.get(agent_name, agent_name.capitalize())
 
     def get_agent_color(self, agent_name: str | None) -> str:
         """Get the sidebar color for an agent (auto-generated if not set)."""
@@ -77,7 +86,8 @@ class SlackPoster:
         color = self.get_agent_color(agent_name)
 
         if agent_name:
-            footer = f"{agent_name}@{self._host_id}"
+            display = self.get_display_name(agent_name)
+            footer = f"{display} · {self._host_id}"
         else:
             footer = self._host_id
 
@@ -87,6 +97,7 @@ class SlackPoster:
         return {
             "color": color,
             "text": text,
+            "fallback": text[:120],  # push notification preview
             "footer": footer,
             "mrkdwn_in": ["text"],
         }
@@ -101,10 +112,12 @@ class SlackPoster:
     ) -> dict:
         """Post a new branded message. Returns the API response."""
         attachment = self._build_attachment(text, agent_name, footer_extra)
+        # Content lives in the attachment only. We omit top-level text to prevent
+        # Slack from rendering it twice (above + inside attachment).
         return await self._client.chat_postMessage(
             channel=channel,
             attachments=[attachment],
-            text=text,  # fallback for notifications
+            text=" ",  # minimal fallback for push notifications
             thread_ts=thread_ts,
         )
 
@@ -122,7 +135,7 @@ class SlackPoster:
             channel=channel,
             ts=ts,
             attachments=[attachment],
-            text=text,  # fallback
+            text="",
         )
 
     async def post_plain(

@@ -40,8 +40,7 @@ class Agent:
 
     @property
     def display_name(self) -> str:
-        label = self.config.display_name or self.name.capitalize()
-        return f"{label}@{self.host_id}"
+        return self.config.display_name or self.name.capitalize()
 
     def pause(self):
         self.status = "paused"

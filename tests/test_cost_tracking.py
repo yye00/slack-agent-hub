@@ -103,7 +103,7 @@ def mock_agent():
     agent = MagicMock()
     agent.name = "fred"
     agent.host_id = "host1"
-    agent.display_name = "Fred@host1"
+    agent.display_name = "Fred"
     agent.config = MagicMock()
     agent.config.model = "claude-opus-4-5"
     agent.profile = MagicMock()

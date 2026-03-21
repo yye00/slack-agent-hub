@@ -14,6 +14,7 @@ class RouteAction(Enum):
     AGENT_QUERY = auto()
     CLI_PASSTHROUGH = auto()
     BROADCAST = auto()
+    DISCUSS = auto()
     HANDOFF_LOCAL = auto()
     HANDOFF_REMOTE = auto()
     IGNORE = auto()
@@ -68,6 +69,9 @@ class Router:
             if target in self._local_agents:
                 return RouteResult(action=RouteAction.HANDOFF_LOCAL, parsed=parsed, target_agent=target)
             return RouteResult(action=RouteAction.HANDOFF_REMOTE, parsed=parsed)
+
+        if parsed.type == MessageType.DISCUSS:
+            return RouteResult(action=RouteAction.DISCUSS, parsed=parsed, broadcast_agents=list(agents_in_channel))
 
         if parsed.type == MessageType.BROADCAST:
             return RouteResult(action=RouteAction.BROADCAST, parsed=parsed, broadcast_agents=list(agents_in_channel))

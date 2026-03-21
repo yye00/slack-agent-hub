@@ -26,7 +26,7 @@ async def test_session_start_posts_to_ops_channel(notifier, poster):
     await notifier.notify(SessionEvent(
         type="start",
         agent_name="fred",
-        agent_display="Fred@host1",
+        agent_display="Fred",
         session_id="abc-123",
         channel_id="C_SPE",
     ))
@@ -43,7 +43,7 @@ async def test_session_restart_posts_to_both_channels(notifier, poster):
     await notifier.notify(SessionEvent(
         type="restart",
         agent_name="fred",
-        agent_display="Fred@host1",
+        agent_display="Fred",
         session_id="new-456",
         channel_id="C_SPE",
         previous_session_id="old-123",
@@ -61,7 +61,7 @@ async def test_session_death_posts_to_ops_channel(notifier, poster):
     await notifier.notify(SessionEvent(
         type="death",
         agent_name="fred",
-        agent_display="Fred@host1",
+        agent_display="Fred",
         session_id="abc-123",
         channel_id="C_SPE",
         reason="backend process exited with code 1",
@@ -78,7 +78,7 @@ async def test_restart_notification_includes_previous_session_id(notifier, poste
     await notifier.notify(SessionEvent(
         type="restart",
         agent_name="fred",
-        agent_display="Fred@host1",
+        agent_display="Fred",
         session_id="new-456",
         channel_id="C_SPE",
         previous_session_id="old-123",
@@ -99,7 +99,7 @@ async def test_restart_notification_includes_reason(notifier, poster):
     await notifier.notify(SessionEvent(
         type="restart",
         agent_name="fred",
-        agent_display="Fred@host1",
+        agent_display="Fred",
         session_id="new-456",
         channel_id="C_SPE",
         previous_session_id="old-123",

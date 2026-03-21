@@ -315,6 +315,20 @@ async def handle_message(event, say):
             await asyncio.gather(*tasks, return_exceptions=True)
         return
 
+    if result.action == RouteAction.DISCUSS:
+        rounds = int(result.parsed.options.get("rounds", 2))
+        rounds = max(1, min(rounds, 5))  # clamp to 1-5
+        asyncio.create_task(
+            run_discussion(
+                topic=result.parsed.text,
+                agent_names=result.broadcast_agents,
+                channel_id=channel_id,
+                thread_ts=thread_ts,
+                rounds=rounds,
+            )
+        )
+        return
+
 
 async def run_agent_query(agent, text, channel_id, thread_ts, is_background=False):
     """Execute a query against an agent."""
@@ -481,34 +495,175 @@ async def _run_agent_query_inner(agent, text, channel_id, thread_ts, is_backgrou
                 logger.warning(f"Auto-upload failed for {p}: {e}")
 
 
-async def announce_agents():
-    """Post an introduction message in each agent's channels on startup."""
-    for name, agent in agents.items():
-        label = agent.config.display_name or name.capitalize()
-        profile_name = agent.config.profile
-        profile = config.profiles.get(profile_name)
-        tools_list = ", ".join(profile.allowed_tools) if profile else "N/A"
-        lines = [
-            f"👋 *{label}@{config.host_id}* online",
-            f"• *Addressable as:* `@{name}` or `@{name}@{config.host_id}`",
-            f"• *Backend:* {agent.backend.name} ({agent.config.model})",
-            f"• *Working directory:* `{agent.config.cwd}`",
-            f"• *Profile:* {profile_name} — permission mode: {profile.permission_mode if profile else 'N/A'}",
-            f"• *Allowed tools:* {tools_list}",
-            f"• *Launch command:* `uv run python hub.py` (config: `config.yaml`)",
-            f"• *Host:* {config.host_id}",
-            "",
-            "Type `!help` for available commands.",
-        ]
-        msg = "\n".join(lines)
+async def run_discussion(topic, agent_names, channel_id, thread_ts, rounds=2):
+    """Orchestrate a multi-round discussion between agents.
 
+    Round 1: All agents respond to the topic concurrently.
+    Round 2+: Each agent sees what others said and responds sequentially.
+    """
+    active_agents = []
+    for name in agent_names:
+        agent = agents.get(name)
+        if agent and agent.status == "active":
+            active_agents.append(agent)
+
+    if len(active_agents) < 2:
+        await poster.post(
+            channel=channel_id,
+            text="Need at least 2 active agents for a discussion.",
+            thread_ts=thread_ts,
+        )
+        return
+
+    names_str = ", ".join(f"*{a.display_name}*" for a in active_agents)
+    await poster.post_plain(
+        channel=channel_id,
+        text=f"💬 *Discussion starting* — {names_str} │ {rounds} round{'s' if rounds != 1 else ''}\n> _{topic}_",
+        thread_ts=thread_ts,
+    )
+
+    # Track responses per round: {agent_name: response_text}
+    responses: dict[str, str] = {}
+
+    for round_num in range(1, rounds + 1):
+        if round_num == 1:
+            # Round 1: all agents respond concurrently to the raw topic
+            prompt = topic
+            tasks = []
+            for agent in active_agents:
+                tasks.append(
+                    _discussion_query(agent, prompt, channel_id, thread_ts)
+                )
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for agent, result in zip(active_agents, results):
+                if isinstance(result, Exception):
+                    logger.warning(f"Discussion round 1 failed for {agent.name}: {result}")
+                    responses[agent.name] = "(no response)"
+                elif result:
+                    responses[agent.name] = result
+                else:
+                    responses[agent.name] = "(no response)"
+        else:
+            # Round 2+: sequential — each agent sees what others said
+            await poster.post_plain(
+                channel=channel_id,
+                text=f"━━━  *Round {round_num}*  ━━━",
+                thread_ts=thread_ts,
+            )
+            new_responses: dict[str, str] = {}
+            for agent in active_agents:
+                # Build context from other agents' responses
+                others = []
+                for other in active_agents:
+                    if other.name != agent.name and responses.get(other.name):
+                        text_snippet = responses[other.name][:1500]
+                        others.append(f"**{other.display_name}** said:\n{text_snippet}")
+
+                follow_up = (
+                    f"This is a group discussion about: {topic}\n\n"
+                    f"Here's what the other participants said:\n\n"
+                    + "\n\n---\n\n".join(others)
+                    + "\n\nNow respond with your perspective. "
+                    "You can agree, disagree, build on their points, or raise new angles. "
+                    "Be direct and concise."
+                )
+                result = await _discussion_query(agent, follow_up, channel_id, thread_ts)
+                new_responses[agent.name] = result or "(no response)"
+
+            responses = new_responses
+
+    await poster.post_plain(
+        channel=channel_id,
+        text=f"💬 *Discussion complete* — {rounds} round{'s' if rounds != 1 else ''} finished.",
+        thread_ts=thread_ts,
+    )
+
+
+async def _discussion_query(agent, prompt, channel_id, thread_ts) -> str:
+    """Run a single agent query for discussion and return the response text."""
+    try:
+        engine = QueryEngine(
+            agent=agent,
+            slack_client=app.client,
+            poster=poster,
+            db=db,
+            heartbeat_interval=config.heartbeat.interval_secs,
+            stall_warn_mins=config.heartbeat.stall_warn_mins,
+            tips_enabled=config.heartbeat.tips,
+        )
+
+        # Start session if needed
+        session_id = agent.current_session_id
+        if not session_id:
+            memory = read_memory(agent.config.cwd)
+            memory = truncate_to_token_limit(memory)
+            pins = await db.list_pins(channel_id)
+            pin_texts = [p["content"] for p in pins]
+            system_prompt = agent.build_system_prompt(
+                roster_text="", pins=pin_texts, memory_text=memory,
+            )
+            session_id = await agent.backend.start_session(
+                cwd=agent.config.cwd,
+                system_prompt=system_prompt,
+                model=agent.config.model,
+            )
+
+        result = await engine.execute(
+            prompt=prompt,
+            channel_id=channel_id,
+            thread_ts=thread_ts,
+            session_id=session_id,
+        )
+
+        if result.session_id:
+            agent.current_session_id = result.session_id
+
+        return result.text if result.success else ""
+    except Exception as e:
+        logger.exception(f"Discussion query failed for {agent.name}: {e}")
+        return ""
+
+
+async def announce_agents():
+    """Post a compact introduction for each agent in their channels."""
+    # Group agents by channel to post a single combined announcement
+    channel_agents: dict[str, list[str]] = {}
+    for name, agent in agents.items():
         for ch_ref in agent.config.channels:
             ch_id = resolve_channel(ch_ref)
             if ch_id:
-                try:
-                    await poster.post(channel=ch_id, text=msg, agent_name=name)
-                except Exception as e:
-                    logger.warning(f"Failed to announce {name} in {ch_ref}: {e}")
+                channel_agents.setdefault(ch_id, []).append(name)
+
+    for ch_id, agent_names in channel_agents.items():
+        if len(agent_names) == 1:
+            # Single agent — concise announcement
+            name = agent_names[0]
+            agent = agents[name]
+            label = agent.config.display_name or name.capitalize()
+            msg = (
+                f"👋 *{label}* online — "
+                f"`{agent.backend.name}` · `{agent.config.model}` · "
+                f"address as `{name}:` │ `!help` for commands"
+            )
+            try:
+                await poster.post(channel=ch_id, text=msg, agent_name=name)
+            except Exception as e:
+                logger.warning(f"Failed to announce {name} in {ch_id}: {e}")
+        else:
+            # Multi-agent channel — combined roster
+            lines = ["👋 *Agents online:*"]
+            for name in agent_names:
+                agent = agents[name]
+                label = agent.config.display_name or name.capitalize()
+                lines.append(
+                    f"  •  *{label}* — `{agent.backend.name}` · "
+                    f"`{agent.config.model}` · address as `{name}:`"
+                )
+            lines.append(f"_Use `Everyone:` to broadcast, `Debate:` for discussion, `!help` for commands_")
+            try:
+                await poster.post_plain(channel=ch_id, text="\n".join(lines))
+            except Exception as e:
+                logger.warning(f"Failed to announce agents in {ch_id}: {e}")
 
 
 async def shutdown(sig_name: str):
@@ -575,9 +730,11 @@ async def main():
         host_color=config.host_color,
     )
 
-    # Register per-agent colors (explicit from config, or evenly spaced)
+    # Register per-agent display names and colors
     auto_agents = []
     for name, agent_cfg in config.agents.items():
+        display = agent_cfg.display_name or name.capitalize()
+        poster.set_agent_display_name(name, display)
         if agent_cfg.color:
             poster.set_agent_color(name, agent_cfg.color)
         else:

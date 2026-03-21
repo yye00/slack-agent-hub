@@ -38,7 +38,7 @@ async def run_tests():
         agent.name = name
         agent.host_id = config.host_id
         agent.status = "active"
-        agent.display_name = f"{agent_cfg.display_name or name.capitalize()}@{config.host_id}"
+        agent.display_name = agent_cfg.display_name or name.capitalize()
         agent.current_session_id = None
         agent.config = agent_cfg
         agent.backend = MagicMock()

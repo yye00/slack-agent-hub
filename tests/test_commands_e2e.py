@@ -20,7 +20,7 @@ def make_mock_agent(name="tester", host_id="fedora", status="active",
     agent.name = name
     agent.host_id = host_id
     agent.status = status
-    agent.display_name = f"{name.capitalize()}@{host_id}"
+    agent.display_name = name.capitalize()
     agent.current_session_id = session_id
     agent.config = MagicMock()
     agent.config.model = model

@@ -54,7 +54,7 @@ def test_agent_identity(agent_config, profile, mock_backend):
     )
     assert agent.name == "fred"
     assert agent.host_id == "host1"
-    assert agent.display_name == "Fred@host1"
+    assert agent.display_name == "Fred"
 
 
 def test_agent_status_default(agent_config, profile, mock_backend):

@@ -118,15 +118,11 @@ class QueryEngine:
             except Exception as e:
                 logger.debug(f"Failed to log cost: {e}")
 
-        # Build footer with session info
+        # Build footer with session info (just the short ID — use !resume to reconnect)
         footer_extra = None
         if result.session_id:
             sid = result.session_id[:8]
-            parts = [f"session {sid}"]
-            resume_cmd = agent.backend.terminal_resume_command(result.session_id)
-            if resume_cmd:
-                parts.append(f"`{resume_cmd}`")
-            footer_extra = " │ ".join(parts)
+            footer_extra = f"session {sid}"
 
         # Update placeholder with response or completion
         if result.success:
@@ -262,7 +258,7 @@ class QueryEngine:
                 ctx_limit = None
 
             msg = format_heartbeat(
-                agent_name=agent.name.capitalize(),
+                agent_name=agent.display_name,
                 host_id=agent.host_id,
                 backend_name=agent.backend.name,
                 elapsed_secs=hb_state.elapsed_secs(),

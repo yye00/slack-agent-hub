@@ -19,7 +19,7 @@ def mock_agent():
     agent = MagicMock()
     agent.name = "fred"
     agent.host_id = "host1"
-    agent.display_name = "Fred@host1"
+    agent.display_name = "Fred"
     agent.config = MagicMock()
     agent.config.cwd = "/tmp/test"
     agent.profile = MagicMock()

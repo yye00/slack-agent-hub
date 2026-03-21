@@ -9,7 +9,7 @@ def handler():
     agents = {
         "fred": MagicMock(
             name="fred",
-            display_name="Fred@host1",
+            display_name="Fred",
             backend=MagicMock(name="claude"),
             config=MagicMock(model="claude-sonnet-4-5", profile="dev", cwd="/tmp/test"),
             status="active",
@@ -29,7 +29,7 @@ async def test_handle_agents(handler):
     await handler.handle("agents", [], {}, "C123", None, "fred", "U_USER")
     handler._poster.post.assert_called_once()
     call_text = handler._poster.post.call_args.kwargs["text"]
-    assert "Fred@host1" in call_text
+    assert "Fred" in call_text
 
 
 @pytest.mark.asyncio

@@ -13,7 +13,7 @@ def make_agent(name="agent1", host_id="testhost", status="active",
     agent.status = status
     agent.current_session_id = session_id
     agent._active_query_task = query_task
-    agent.display_name = f"{name.capitalize()}@{host_id}"
+    agent.display_name = name.capitalize()
     agent.backend = MagicMock()
     agent.backend.name = backend_name
     return agent

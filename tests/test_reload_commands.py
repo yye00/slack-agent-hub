@@ -10,7 +10,7 @@ from core.command_handler import CommandHandler
 def agents():
     agent_fred = MagicMock()
     agent_fred.name = "fred"
-    agent_fred.display_name = "Fred@host1"
+    agent_fred.display_name = "Fred"
     agent_fred.backend = MagicMock()
     agent_fred.backend.name = "claude"
     agent_fred.config = MagicMock()
@@ -25,7 +25,7 @@ def agents():
 
     agent_barb = MagicMock()
     agent_barb.name = "barb"
-    agent_barb.display_name = "Barb@host1"
+    agent_barb.display_name = "Barb"
     agent_barb.backend = MagicMock()
     agent_barb.backend.name = "claude"
     agent_barb.config = MagicMock()
@@ -105,8 +105,8 @@ async def test_roster_lists_all_agents(handler):
     """!roster shows every agent."""
     await handler.handle("roster", [], {}, "C123", None, "fred", "U1")
     text = get_reply_text(handler)
-    assert "Fred@host1" in text
-    assert "Barb@host1" in text
+    assert "Fred" in text
+    assert "Barb" in text
 
 
 @pytest.mark.asyncio

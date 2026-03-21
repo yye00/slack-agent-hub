@@ -13,6 +13,7 @@ class MessageType(Enum):
     CLI_PASSTHROUGH = auto() # > /command
     HANDOFF = auto()         # @Name@host: message
     BROADCAST = auto()       # Everyone: message
+    DISCUSS = auto()         # Debate: topic  (multi-round discussion)
     PLAIN_TEXT = auto()      # Regular message to agent
 
 
@@ -33,6 +34,7 @@ _COMMAND_RE = re.compile(r"^!(\w+)\s*(.*)", re.DOTALL)
 _CLI_PASSTHROUGH_RE = re.compile(r"^>\s*(/\S.*)", re.DOTALL)
 _HANDOFF_RE = re.compile(r"^@(\w+)@([\w-]+):\s*(.*)", re.DOTALL)
 _BROADCAST_RE = re.compile(r"^(?:Everyone|All):\s*(.*)", re.IGNORECASE | re.DOTALL)
+_DISCUSS_RE = re.compile(r"^(?:Debate|Discuss|Discussion):\s*(.*)", re.IGNORECASE | re.DOTALL)
 _OPTION_RE = re.compile(r"--(\w+)\s+(\S+)")
 
 
@@ -63,6 +65,16 @@ def parse_message(text: str) -> ParsedCommand:
         args_str = _OPTION_RE.sub("", rest).strip()
         args = args_str.split() if args_str else []
         return ParsedCommand(type=MessageType.COMMAND, command=command, args=args, options=options)
+
+    m = _DISCUSS_RE.match(text)
+    if m:
+        topic_text = m.group(1).strip()
+        # Extract --rounds N option if present
+        options = {}
+        for opt_match in _OPTION_RE.finditer(topic_text):
+            options[opt_match.group(1)] = opt_match.group(2)
+        topic_text = _OPTION_RE.sub("", topic_text).strip()
+        return ParsedCommand(type=MessageType.DISCUSS, text=topic_text, options=options)
 
     m = _BROADCAST_RE.match(text)
     if m:

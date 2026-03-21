@@ -12,7 +12,7 @@ def handler():
     agents = {
         "fred": MagicMock(
             name="fred",
-            display_name="Fred@host1",
+            display_name="Fred",
             backend=MagicMock(name="claude"),
             config=MagicMock(model="claude-sonnet-4-5", profile="dev", cwd="/tmp/test"),
             status="active",
