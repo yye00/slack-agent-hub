@@ -176,11 +176,26 @@ class CommandHandler:
             return "?"
 
     async def _cmd_sessions(self, args, options, channel_id, thread_ts, target_agent, user):
-        name = args[0] if args else target_agent
-        if name:
+        if args:
+            # Show sessions for a specific agent
+            agent_names = [args[0]]
+        else:
+            # Show sessions for all agents in the channel
+            channel_agents = self._get_channel_agents(channel_id)
+            if channel_agents:
+                agent_names = [a.name for a in channel_agents]
+            elif target_agent:
+                agent_names = [target_agent]
+            else:
+                agent_names = list(self._agents.keys())
+
+        blocks = []
+        for name in agent_names:
+            agent = self._agents.get(name)
+            display = agent.display_name if agent else name
             sessions = await self._db.list_sessions(name)
             if sessions:
-                lines = []
+                lines = [f"*{display}* (`{name}`):"]
                 for s in sessions:
                     session_name = s.get("name") or "unnamed"
                     age = self._format_age(s.get("created_at", ""))
@@ -192,10 +207,12 @@ class CommandHandler:
                     lines.append(
                         f"  `{s['id'][:8]}` {session_name}{model} │ {status} │ {age} │ last: {last_active}"
                     )
-                text = f"Sessions for {name}:\n" + "\n".join(lines)
-            else:
-                text = f"No sessions for {name}."
-            await self._reply(channel_id, text, thread_ts)
+                blocks.append("\n".join(lines))
+
+        if blocks:
+            await self._reply(channel_id, "\n───\n".join(blocks), thread_ts)
+        else:
+            await self._reply(channel_id, "No sessions found.", thread_ts)
 
     async def _cmd_new(self, args, options, channel_id, thread_ts, target_agent, user):
         agent = self._agents.get(target_agent)
@@ -601,13 +618,14 @@ class CommandHandler:
         profile = options.get("profile", "dev")
         target_channel = options.get("channel", "")
 
-        # Resolve target channel — use specified channel, or current channel
+        # Resolve target channel — refresh channel list first for new channels
         spawn_channel_id = channel_id
         if target_channel:
-            from hub import resolve_channel
+            from hub import resolve_channel, resolve_channel_ids
+            await resolve_channel_ids(self._slack)
             resolved = resolve_channel(target_channel)
             if not resolved:
-                await self._reply(channel_id, f"Unknown channel: `{target_channel}`", thread_ts)
+                await self._reply(channel_id, f"Unknown channel: `{target_channel}`. Is the bot invited to it?", thread_ts)
                 return
             spawn_channel_id = resolved
 

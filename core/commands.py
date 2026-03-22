@@ -35,7 +35,7 @@ _CLI_PASSTHROUGH_RE = re.compile(r"^>\s*(/\S.*)", re.DOTALL)
 _HANDOFF_RE = re.compile(r"^@(\w+)@([\w-]+):\s*(.*)", re.DOTALL)
 _BROADCAST_RE = re.compile(r"^(?:Everyone|All):\s*(.*)", re.IGNORECASE | re.DOTALL)
 _DISCUSS_RE = re.compile(r"^(?:Debate|Discuss|Discussion):\s*(.*)", re.IGNORECASE | re.DOTALL)
-_OPTION_RE = re.compile(r"--(\w+)\s+(\S+)")
+_OPTION_RE = re.compile(r"--(\w+)[=\s](\S+)")
 
 
 def parse_message(text: str) -> ParsedCommand:

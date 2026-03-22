@@ -80,3 +80,19 @@ def test_parse_pin_command():
     assert result.type == MessageType.COMMAND
     assert result.command == "pin"
     assert result.args == ["Always", "use", "Poetry,", "not", "pip"]
+
+
+def test_parse_options_equals_format():
+    result = parse_message("!spawn bobbi --backend=claude --cwd=/home/captain/work --channel=#bob-latest")
+    assert result.type == MessageType.COMMAND
+    assert result.command == "spawn"
+    assert "bobbi" in result.args
+    assert result.options.get("backend") == "claude"
+    assert result.options.get("cwd") == "/home/captain/work"
+    assert result.options.get("channel") == "#bob-latest"
+
+
+def test_parse_options_space_format():
+    result = parse_message("!spawn bobbi --backend claude --cwd /home/captain/work")
+    assert result.options.get("backend") == "claude"
+    assert result.options.get("cwd") == "/home/captain/work"
