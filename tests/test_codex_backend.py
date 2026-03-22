@@ -69,13 +69,15 @@ async def test_resume_session_empty_id():
 
 @pytest.mark.asyncio
 async def test_query_parses_text_events():
-    """Codex message events become Event(type='text')."""
+    """Codex item.completed agent_message events become Event(type='text')."""
     backend = CodexBackend()
     await backend.start_session("/tmp", "sys", "o3")
 
     fake_lines = [
-        json.dumps({"type": "message", "role": "assistant", "content": "Hello"}),
-        json.dumps({"type": "completion", "response": "Hello", "session_id": "s1", "usage": {"input_tokens": 10, "output_tokens": 5}}),
+        json.dumps({"type": "thread.started", "thread_id": "t1"}),
+        json.dumps({"type": "turn.started"}),
+        json.dumps({"type": "item.completed", "item": {"id": "item_0", "type": "agent_message", "text": "Hello"}}),
+        json.dumps({"type": "turn.completed", "usage": {"input_tokens": 10, "output_tokens": 5}}),
     ]
 
     async def mock_run(*a, **kw):
@@ -94,13 +96,14 @@ async def test_query_parses_text_events():
 
 @pytest.mark.asyncio
 async def test_query_parses_tool_use_events():
-    """Codex function_call events become Event(type='tool_use')."""
+    """Codex item.completed function_call events become Event(type='tool_use')."""
     backend = CodexBackend()
     await backend.start_session("/tmp", "sys", "o3")
 
     fake_lines = [
-        json.dumps({"type": "function_call", "name": "shell", "arguments": '{"cmd":"ls"}'}),
-        json.dumps({"type": "completion", "response": "done", "session_id": "s1", "usage": {}}),
+        json.dumps({"type": "thread.started", "thread_id": "t1"}),
+        json.dumps({"type": "item.completed", "item": {"id": "item_0", "type": "function_call", "name": "shell", "arguments": '{"cmd":"ls"}'}}),
+        json.dumps({"type": "turn.completed", "usage": {}}),
     ]
 
     async def mock_run(*a, **kw):
@@ -119,13 +122,14 @@ async def test_query_parses_tool_use_events():
 
 @pytest.mark.asyncio
 async def test_query_parses_complete_event():
-    """Codex completion events become Event(type='complete') with session_id and tokens."""
+    """Codex turn.completed events become Event(type='complete') with session_id and tokens."""
     backend = CodexBackend()
     await backend.start_session("/tmp", "sys", "o3")
 
     fake_lines = [
-        json.dumps({"type": "message", "role": "assistant", "content": "Done"}),
-        json.dumps({"type": "completion", "response": "Done", "session_id": "sess-99", "usage": {"input_tokens": 200, "output_tokens": 100}}),
+        json.dumps({"type": "thread.started", "thread_id": "sess-99"}),
+        json.dumps({"type": "item.completed", "item": {"id": "item_0", "type": "agent_message", "text": "Done"}}),
+        json.dumps({"type": "turn.completed", "usage": {"input_tokens": 200, "output_tokens": 100}}),
     ]
 
     async def mock_run(*a, **kw):
@@ -151,8 +155,9 @@ async def test_query_handles_malformed_json():
 
     fake_lines = [
         "garbage",
-        json.dumps({"type": "message", "role": "assistant", "content": "ok"}),
-        json.dumps({"type": "completion", "response": "ok", "session_id": "s1", "usage": {}}),
+        json.dumps({"type": "thread.started", "thread_id": "t1"}),
+        json.dumps({"type": "item.completed", "item": {"id": "item_0", "type": "agent_message", "text": "ok"}}),
+        json.dumps({"type": "turn.completed", "usage": {}}),
     ]
 
     async def mock_run(*a, **kw):
@@ -183,6 +188,48 @@ async def test_query_emits_error_on_process_failure():
             events.append(event)
 
     assert any(e.type == "error" for e in events)
+
+
+@pytest.mark.asyncio
+async def test_query_handles_turn_failed():
+    """Codex turn.failed events become error events."""
+    backend = CodexBackend()
+    await backend.start_session("/tmp", "sys", "o3")
+
+    fake_lines = [
+        json.dumps({"type": "thread.started", "thread_id": "t1"}),
+        json.dumps({"type": "turn.started"}),
+        json.dumps({"type": "turn.failed", "error": {"message": "model not supported"}}),
+    ]
+
+    async def mock_run(*a, **kw):
+        for line in fake_lines:
+            yield line
+
+    with patch("backends.codex.run_cli_query", side_effect=mock_run):
+        events = []
+        async for event in backend.query("", "test"):
+            events.append(event)
+
+    assert any(e.type == "error" for e in events)
+
+
+def test_build_command_skips_default_model():
+    """When model is 'codex', don't pass -m flag."""
+    backend = CodexBackend()
+    backend._session_config = {"model": "codex", "cwd": "/tmp"}
+    cmd = backend._build_command("hello")
+    assert "-m" not in cmd
+
+
+def test_build_command_passes_custom_model():
+    """When model is specific, pass -m flag."""
+    backend = CodexBackend()
+    backend._session_config = {"model": "o3", "cwd": "/tmp"}
+    cmd = backend._build_command("hello")
+    assert "-m" in cmd
+    idx = cmd.index("-m")
+    assert cmd[idx + 1] == "o3"
 
 
 # ── Cancel / info ──

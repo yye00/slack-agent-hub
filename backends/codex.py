@@ -106,7 +106,7 @@ class CodexBackend(Backend):
             ]
 
         model = self._session_config.get("model")
-        if model:
+        if model and model != "codex":
             cmd.extend(["-m", model])
 
         cwd = self._session_config.get("cwd")
@@ -129,22 +129,33 @@ class CodexBackend(Backend):
 
         event_type = data.get("type", "")
 
-        if event_type == "message" and data.get("role") == "assistant":
-            content = data.get("content", "")
-            response_parts.append(content)
-            return Event(type="text", content=content, raw={"block": "text"})
+        if event_type == "thread.started":
+            # Capture session/thread ID
+            tid = data.get("thread_id", "")
+            if tid:
+                self._session_config["session_id"] = tid
+            return None
 
-        elif event_type == "function_call":
-            return Event(
-                type="tool_use",
-                content=data.get("name", "unknown"),
-                detail=str(data.get("arguments", ""))[:200],
-                raw={"tool_id": data.get("id", "")},
-            )
+        elif event_type == "item.completed":
+            item = data.get("item", {})
+            item_type = item.get("type", "")
+            if item_type == "agent_message":
+                content = item.get("text", "")
+                response_parts.append(content)
+                return Event(type="text", content=content, raw={"block": "text"})
+            elif item_type == "function_call":
+                return Event(
+                    type="tool_use",
+                    content=item.get("name", "unknown"),
+                    detail=str(item.get("arguments", ""))[:200],
+                    raw={"tool_id": item.get("id", "")},
+                )
+            elif item_type == "error":
+                return Event(type="error", content=item.get("message", str(item)))
 
-        elif event_type == "completion":
+        elif event_type == "turn.completed":
             usage = data.get("usage", {})
-            session_id = data.get("session_id", "")
+            session_id = self._session_config.get("session_id", "")
             return Event(
                 type="complete",
                 content="\n".join(response_parts),
@@ -156,6 +167,10 @@ class CodexBackend(Backend):
                     "output_tokens": usage.get("output_tokens"),
                 },
             )
+
+        elif event_type == "turn.failed":
+            error = data.get("error", {})
+            return Event(type="error", content=error.get("message", str(data)))
 
         elif event_type == "error":
             return Event(type="error", content=data.get("message", str(data)))

@@ -21,7 +21,7 @@ from core.lifecycle import LifecycleNotifier, SessionEvent
 from core.command_handler import CommandHandler
 from core.health import HealthMonitor
 from core.commands import MessageType
-from core.config import load_config
+from core.config import load_config, AgentConfig
 from core.rate_limit import RateLimiter
 from core.heartbeat import TipRotator
 from core.query import QueryEngine
@@ -98,6 +98,87 @@ def resolve_channel(ref: str) -> str | None:
     return channel_id_map.get(ref) or channel_id_map.get(f"#{ref}")
 
 
+async def spawn_agent(
+    name: str,
+    backend_name: str,
+    model: str,
+    cwd: str,
+    display_name: str,
+    profile: str,
+    channel_id: str,
+) -> Agent:
+    """Dynamically spawn a new agent and register it in the channel."""
+    global router
+
+    backend_cls = BACKEND_CLASSES.get(backend_name)
+    if not backend_cls:
+        raise ValueError(f"Unknown backend: {backend_name}. Available: {', '.join(BACKEND_CLASSES)}")
+
+    # Use backend default model if none specified
+    if not model:
+        backend_cfg = config.backends.get(backend_name)
+        model = backend_cfg.get("default_model", "") if backend_cfg else ""
+
+    profile_cfg = config.profiles.get(profile)
+    if not profile_cfg:
+        raise ValueError(f"Unknown profile: {profile}. Available: {', '.join(config.profiles)}")
+
+    backend = backend_cls()
+    agent_cfg = AgentConfig(
+        backend=backend_name,
+        model=model,
+        channels=[channel_id],
+        cwd=cwd,
+        profile=profile,
+        display_name=display_name,
+    )
+
+    agent = Agent(
+        name=name,
+        host_id=config.host_id,
+        config=agent_cfg,
+        profile=profile_cfg,
+        backend=backend,
+        db=db,
+    )
+    agents[name] = agent
+    await db.upsert_agent(name, "active", agent._started_at)
+
+    # Register in channel_agents and rebuild router
+    channel_agents = {}
+    agent_hosts = {}
+    local_agents = set()
+    display_names = {}
+
+    for n, a in agents.items():
+        agent_hosts[n] = config.host_id
+        local_agents.add(n)
+        display_names[n] = a.display_name
+        for ch_ref in a.config.channels:
+            ch_id = resolve_channel(ch_ref) or ch_ref
+            channel_agents.setdefault(ch_id, []).append(n)
+
+    ops_id = resolve_channel(config.ops_channel) or ""
+    router = Router(
+        ops_channel_id=ops_id,
+        channel_agents=channel_agents,
+        agent_hosts=agent_hosts,
+        local_agents=local_agents,
+        local_host_id=config.host_id,
+        display_names=display_names,
+    )
+
+    # Update command handler mappings
+    command_handler._channel_agents = channel_agents
+    command_handler._agents = agents
+
+    # Register display name and color with poster
+    poster.set_agent_display_name(name, agent.display_name)
+
+    logger.info(f"Spawned agent: {agent.display_name} ({backend_name}) in channel {channel_id}")
+    return agent
+
+
 async def initialize_agents():
     """Create Agent instances from config."""
     global agents, router
@@ -169,7 +250,10 @@ async def initialize_agents():
     )
 
     global command_handler
-    command_handler = CommandHandler(agents=agents, db=db, slack_client=app.client, poster=poster)
+    command_handler = CommandHandler(
+        agents=agents, db=db, slack_client=app.client, poster=poster,
+        channel_agents=channel_agents, spawn_callback=spawn_agent,
+    )
 
 
 _seen_events: set[str] = set()
@@ -432,6 +516,31 @@ async def _run_agent_query_inner(agent, text, channel_id, thread_ts, is_backgrou
         thread_ts=thread_ts,
         session_id=session_id,
     )
+
+    # Check for handoff pattern in agent's response
+    if result.success and result.text:
+        from features.handoff import detect_handoff_in_response
+        handoff = detect_handoff_in_response(result.text)
+        if handoff:
+            # Resolve target by internal name or display name
+            target_name = handoff.target_agent  # already lowercased
+            target = agents.get(target_name)
+            if not target:
+                # Try display name lookup
+                for a in agents.values():
+                    if a.display_name.lower() == target_name or a.name.lower() == target_name:
+                        target = a
+                        break
+            if target and target.status == "active" and target.name != agent.name:
+                logger.info(f"Handoff: {agent.name} → {target.name}: {handoff.content[:80]}")
+                await poster.post_plain(
+                    channel=channel_id,
+                    text=f"↪ _{agent.display_name}_ → _{target.display_name}_",
+                    thread_ts=thread_ts,
+                )
+                asyncio.create_task(
+                    run_agent_query(target, handoff.content, channel_id, thread_ts)
+                )
 
     # Update session tracking — detect restarts (skip if initial session creation)
     if result.session_id and session_id and result.session_id != session_id:

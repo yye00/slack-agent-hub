@@ -28,11 +28,15 @@ class CommandHandler:
         db: Database,
         slack_client: AsyncWebClient,
         poster: SlackPoster,
+        channel_agents: dict[str, list[str]] | None = None,
+        spawn_callback=None,
     ):
         self._agents = agents
         self._db = db
         self._slack = slack_client
         self._poster = poster
+        self._channel_agents = channel_agents or {}
+        self._spawn_callback = spawn_callback
 
     async def _reply(self, channel_id, text, thread_ts=None, agent_name=None):
         """Send a branded reply via the poster."""
@@ -75,35 +79,52 @@ class CommandHandler:
         await self._reply(channel_id, text, thread_ts)
 
     async def _cmd_status(self, args, options, channel_id, thread_ts, target_agent, user):
-        name = args[0] if args else target_agent
-        agent = self._agents.get(name)
-        if agent:
-            session_display = "none"
-            if agent.current_session_id:
-                session = await self._db.get_session(agent.current_session_id)
-                sname = session.get("name", "") if session else ""
-                if sname:
-                    session_display = f"{sname} (`{agent.current_session_id[:8]}…`)"
-                else:
-                    session_display = f"`{agent.current_session_id[:8]}…`"
-            # Build resume hint
-            resume_hint = ""
-            if agent.current_session_id:
-                resume_cmd = agent.backend.terminal_resume_command(agent.current_session_id)
-                if resume_cmd:
-                    resume_hint = f"\nCLI resume: `{resume_cmd}`"
-
-            text = (
-                f"*{agent.display_name}*\n"
-                f"Backend: {agent.backend.name}\n"
-                f"Model: {agent.config.model}\n"
-                f"Profile: {agent.config.profile}\n"
-                f"Status: {agent.status}\n"
-                f"Session: {session_display}"
-                f"{resume_hint}\n"
-                f"CWD: {agent.config.cwd}"
-            )
+        name = args[0] if args else None
+        if name:
+            # Show detailed status for a specific agent
+            agent = self._agents.get(name)
+            if not agent:
+                await self._reply(channel_id, f"Unknown agent: `{name}`. Try `!agents` to list all.", thread_ts)
+                return
+            await self._reply(channel_id, await self._agent_status_block(agent), thread_ts)
+        else:
+            # No agent specified — show all agents in this channel
+            channel_agents = self._get_channel_agents(channel_id)
+            if not channel_agents:
+                channel_agents = list(self._agents.values())
+            blocks = []
+            for agent in channel_agents:
+                blocks.append(await self._agent_status_block(agent))
+            text = "\n───\n".join(blocks)
             await self._reply(channel_id, text, thread_ts)
+
+    async def _agent_status_block(self, agent) -> str:
+        """Build a status block for a single agent."""
+        status_icon = {"active": "🟢", "paused": "🟡"}.get(agent.status, "🔴")
+        session_display = "none"
+        if agent.current_session_id:
+            session = await self._db.get_session(agent.current_session_id)
+            sname = session.get("name", "") if session else ""
+            if sname:
+                session_display = f"{sname} (`{agent.current_session_id[:8]}…`)"
+            else:
+                session_display = f"`{agent.current_session_id[:8]}…`"
+        resume_hint = ""
+        if agent.current_session_id:
+            resume_cmd = agent.backend.terminal_resume_command(agent.current_session_id)
+            if resume_cmd:
+                resume_hint = f"\nCLI resume: `{resume_cmd}`"
+        return (
+            f"{status_icon} *{agent.display_name}* (`{agent.name}`)\n"
+            f"Backend: {agent.backend.name} · {agent.config.model}\n"
+            f"Status: {agent.status} │ Session: {session_display}"
+            f"{resume_hint}"
+        )
+
+    def _get_channel_agents(self, channel_id: str) -> list:
+        """Get Agent objects for a channel."""
+        names = self._channel_agents.get(channel_id, [])
+        return [self._agents[n] for n in names if n in self._agents]
 
     async def _cmd_pause(self, args, options, channel_id, thread_ts, target_agent, user):
         name = args[0] if args else target_agent
@@ -551,6 +572,66 @@ class CommandHandler:
         except Exception as e:
             await self._reply(channel_id, f"Fork failed: {e}", thread_ts)
 
+    async def _cmd_spawn(self, args, options, channel_id, thread_ts, target_agent, user):
+        """Spawn a new agent in a channel.
+
+        Usage: !spawn <name> --backend=claude --cwd=/path --channel=#channel-name
+        """
+        if not args:
+            await self._reply(
+                channel_id,
+                "Usage: `!spawn <name> [--backend=claude|codex|gemini] [--model=<model>] "
+                "[--cwd=<dir>] [--channel=#name] [--profile=dev|ops]`\n"
+                "Example: `!spawn helper --backend=gemini --cwd=/home/captain/work/myproject --channel=#slack-agent-hub`",
+                thread_ts,
+            )
+            return
+        name = args[0].lower()
+        if name in self._agents:
+            await self._reply(channel_id, f"Agent `{name}` already exists.", thread_ts)
+            return
+        if not self._spawn_callback:
+            await self._reply(channel_id, "Spawn not available.", thread_ts)
+            return
+
+        backend = options.get("backend", "claude")
+        model = options.get("model", "")
+        cwd = options.get("cwd", "/home/captain")
+        display_name = options.get("name", name.capitalize())
+        profile = options.get("profile", "dev")
+        target_channel = options.get("channel", "")
+
+        # Resolve target channel — use specified channel, or current channel
+        spawn_channel_id = channel_id
+        if target_channel:
+            from hub import resolve_channel
+            resolved = resolve_channel(target_channel)
+            if not resolved:
+                await self._reply(channel_id, f"Unknown channel: `{target_channel}`", thread_ts)
+                return
+            spawn_channel_id = resolved
+
+        try:
+            agent = await self._spawn_callback(
+                name=name,
+                backend_name=backend,
+                model=model,
+                cwd=cwd,
+                display_name=display_name,
+                profile=profile,
+                channel_id=spawn_channel_id,
+            )
+            channel_label = target_channel if target_channel else "this channel"
+            await self._reply(
+                channel_id,
+                f"🚀 Spawned *{agent.display_name}* (`{name}`) — {backend} · {agent.config.model}\n"
+                f"Channel: {channel_label} │ CWD: `{cwd}`\n"
+                f"Address with `{agent.display_name}:` or `{name}:`",
+                thread_ts,
+            )
+        except Exception as e:
+            await self._reply(channel_id, f"Spawn failed: {e}", thread_ts)
+
     async def _cmd_help(self, args, options, channel_id, thread_ts, target_agent, user):
         help_text = (
             "*Agent Commands:*\n"
@@ -560,6 +641,7 @@ class CommandHandler:
             "  `!unpause [agent]` — resume a paused agent\n"
             "  `!cancel [agent]` — cancel active query\n"
             "  `!restart [agent]` — restart agent (clear session)\n"
+            "  `!spawn <name> [--backend=..] [--model=..] [--cwd=..] [--channel=#..]` — spawn new agent\n"
             "\n*Session Commands:*\n"
             "  `!new [label] [--model=<model>]` — start fresh session\n"
             "  `!sessions [agent]` — list sessions (name, UUID, age, status)\n"

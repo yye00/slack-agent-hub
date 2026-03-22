@@ -113,7 +113,14 @@ class GeminiBackend(Backend):
 
         event_type = data.get("type", "")
 
-        if event_type == "text":
+        if event_type == "init":
+            # Capture session ID from init event
+            sid = data.get("session_id", "")
+            if sid:
+                self._session_config["session_id"] = sid
+            return None
+
+        if event_type == "message" and data.get("role") == "assistant":
             content = data.get("content", "")
             response_parts.append(content)
             return Event(type="text", content=content, raw={"block": "text"})
@@ -127,8 +134,8 @@ class GeminiBackend(Backend):
             )
 
         elif event_type == "result":
-            usage = data.get("usage", {})
-            session_id = data.get("session_id", "")
+            stats = data.get("stats", {})
+            session_id = self._session_config.get("session_id", "")
             return Event(
                 type="complete",
                 content="\n".join(response_parts),
@@ -136,8 +143,8 @@ class GeminiBackend(Backend):
                 raw={
                     "session_id": session_id,
                     "cost_usd": data.get("cost_usd"),
-                    "input_tokens": usage.get("input_tokens"),
-                    "output_tokens": usage.get("output_tokens"),
+                    "input_tokens": stats.get("input_tokens"),
+                    "output_tokens": stats.get("output_tokens"),
                 },
             )
 
