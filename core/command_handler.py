@@ -176,7 +176,10 @@ class CommandHandler:
             return "?"
 
     async def _cmd_sessions(self, args, options, channel_id, thread_ts, target_agent, user):
-        if args:
+        if args and args[0].lower() == "all":
+            # Show sessions for all agents hub-wide
+            agent_names = list(self._agents.keys())
+        elif args:
             # Show sessions for a specific agent
             agent_names = [args[0]]
         else:
