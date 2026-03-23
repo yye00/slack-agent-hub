@@ -86,6 +86,27 @@ class Database:
             (name, status, started_at, status, started_at),
         )
 
+    async def save_spawned_agent(self, name: str, config_json: str, status: str, started_at: str):
+        """Persist a dynamically spawned agent so it survives restarts."""
+        await self.execute(
+            "INSERT INTO agents (name, status, started_at, config_json, spawned) "
+            "VALUES (?, ?, ?, ?, 1) "
+            "ON CONFLICT(name) DO UPDATE SET status=?, started_at=?, config_json=?, spawned=1",
+            (name, status, started_at, config_json, status, started_at, config_json),
+        )
+
+    async def list_spawned_agents(self) -> list[dict]:
+        """Return all dynamically spawned agents that are still active."""
+        return await self.fetch_all(
+            "SELECT * FROM agents WHERE spawned=1 AND status != 'removed' ORDER BY name"
+        )
+
+    async def remove_spawned_agent(self, name: str):
+        """Mark a spawned agent as removed so it won't be restored on restart."""
+        await self.execute(
+            "UPDATE agents SET status='removed' WHERE name=? AND spawned=1", (name,)
+        )
+
     async def get_agent(self, name: str) -> dict | None:
         return await self.fetch_one("SELECT * FROM agents WHERE name=?", (name,))
 

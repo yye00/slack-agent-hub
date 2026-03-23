@@ -110,6 +110,13 @@ async def spawn_agent(
     """Dynamically spawn a new agent and register it in the channel."""
     global router
 
+    # Reserve the Slack app name — using it as an agent display name is confusing
+    app_name = os.getenv("SLACK_APP_NAME", "Skippy").lower()
+    if display_name.lower() == app_name or name.lower() == app_name:
+        raise ValueError(
+            f"'{display_name or name}' is reserved (it's the Slack app name). Choose a different name."
+        )
+
     backend_cls = BACKEND_CLASSES.get(backend_name)
     if not backend_cls:
         raise ValueError(f"Unknown backend: {backend_name}. Available: {', '.join(BACKEND_CLASSES)}")
@@ -142,7 +149,15 @@ async def spawn_agent(
         db=db,
     )
     agents[name] = agent
-    await db.upsert_agent(name, "active", agent._started_at)
+
+    # Persist spawned agent config to DB so it survives restarts
+    import json
+    config_data = {
+        "backend": backend_name, "model": model,
+        "channels": [channel_id], "cwd": cwd,
+        "profile": profile, "display_name": display_name,
+    }
+    await db.save_spawned_agent(name, json.dumps(config_data), "active", agent._started_at)
 
     # Register in channel_agents and rebuild router
     channel_agents = {}
@@ -180,9 +195,11 @@ async def spawn_agent(
 
 
 async def initialize_agents():
-    """Create Agent instances from config."""
+    """Create Agent instances from config and restore spawned agents from DB."""
     global agents, router
+    import json as _json
 
+    # ── Phase 1: load agents defined in config.yaml ──
     for name, agent_cfg in config.agents.items():
         backend_name = agent_cfg.backend
         backend_cls = BACKEND_CLASSES.get(backend_name)
@@ -220,6 +237,67 @@ async def initialize_agents():
         await db.upsert_agent(name, "active", agent._started_at if hasattr(agent, '_started_at') else "")
 
         logger.info(f"Initialized agent: {agent.display_name} ({backend_name})")
+
+    # ── Phase 2: restore dynamically spawned agents from DB ──
+    spawned_rows = await db.list_spawned_agents()
+    for row in spawned_rows:
+        name = row["name"]
+        if name in agents:
+            continue  # Config agent takes precedence over DB
+
+        cfg_raw = row.get("config_json")
+        if not cfg_raw:
+            logger.warning(f"Spawned agent '{name}' has no config_json, skipping")
+            continue
+
+        try:
+            cfg = _json.loads(cfg_raw)
+        except _json.JSONDecodeError:
+            logger.warning(f"Spawned agent '{name}' has invalid config_json, skipping")
+            continue
+
+        backend_name = cfg.get("backend", "")
+        backend_cls = BACKEND_CLASSES.get(backend_name)
+        if not backend_cls:
+            logger.warning(f"Spawned agent '{name}' uses unknown backend '{backend_name}', skipping")
+            continue
+
+        profile_name = cfg.get("profile", "dev")
+        profile_cfg = config.profiles.get(profile_name)
+        if not profile_cfg:
+            logger.warning(f"Spawned agent '{name}' uses unknown profile '{profile_name}', skipping")
+            continue
+
+        backend = backend_cls()
+        model = cfg.get("model", "")
+        agent_cfg = AgentConfig(
+            backend=backend_name,
+            model=model,
+            channels=cfg.get("channels", []),
+            cwd=cfg.get("cwd", "/home/captain"),
+            profile=profile_name,
+            display_name=cfg.get("display_name", name.capitalize()),
+        )
+
+        agent = Agent(
+            name=name,
+            host_id=config.host_id,
+            config=agent_cfg,
+            profile=profile_cfg,
+            backend=backend,
+            db=db,
+        )
+        agents[name] = agent
+
+        # Auto-resume the most recent session for this agent
+        sessions = await db.list_sessions(name)
+        if sessions:
+            latest = sessions[0]  # Already sorted by created_at DESC
+            agent.current_session_id = latest["id"]
+            logger.info(f"Restored spawned agent: {agent.display_name} ({backend_name}), "
+                        f"resuming session {latest['id'][:8]}…")
+        else:
+            logger.info(f"Restored spawned agent: {agent.display_name} ({backend_name}), no previous session")
 
     # Build router
     channel_agents: dict[str, list[str]] = {}
