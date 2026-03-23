@@ -39,13 +39,14 @@ class CommandHandler:
         self._spawn_callback = spawn_callback
 
     async def _reply(self, channel_id, text, thread_ts=None, agent_name=None):
-        """Send a branded reply via the poster."""
-        # Use current agent for color if not explicitly provided
+        """Send a branded reply via the poster, chunking if needed."""
         name = agent_name or getattr(self, "_current_agent", None)
-        await self._poster.post(
-            channel=channel_id, text=text, thread_ts=thread_ts,
-            agent_name=name,
-        )
+        chunks = chunk_response(text)
+        for chunk in chunks:
+            await self._poster.post(
+                channel=channel_id, text=chunk, thread_ts=thread_ts,
+                agent_name=name,
+            )
 
     async def handle(
         self,
