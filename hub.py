@@ -294,10 +294,15 @@ async def initialize_agents():
         if sessions:
             latest = sessions[0]  # Already sorted by created_at DESC
             agent.current_session_id = latest["id"]
+            await backend.resume_session(
+                latest["id"], cwd=agent_cfg.cwd, model=model)
             logger.info(f"Restored spawned agent: {agent.display_name} ({backend_name}), "
                         f"resuming session {latest['id'][:8]}…")
         else:
-            logger.info(f"Restored spawned agent: {agent.display_name} ({backend_name}), no previous session")
+            # No session yet — initialize backend with cwd/model for first query
+            await backend.start_session(
+                cwd=agent_cfg.cwd, system_prompt="", model=model)
+            logger.info(f"Restored spawned agent: {agent.display_name} ({backend_name}), fresh start")
 
     # Build router
     channel_agents: dict[str, list[str]] = {}

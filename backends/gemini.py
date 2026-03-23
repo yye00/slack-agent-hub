@@ -36,10 +36,14 @@ class GeminiBackend(Backend):
         }
         return ""  # Populated by first query result
 
-    async def resume_session(self, session_id: str) -> bool:
+    async def resume_session(self, session_id: str, cwd: str = "", model: str = "") -> bool:
         if not session_id:
             return False
         self._session_config["resume_id"] = session_id
+        if cwd:
+            self._session_config["cwd"] = cwd
+        if model:
+            self._session_config["model"] = model
         return True
 
     async def query(

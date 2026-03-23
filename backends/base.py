@@ -48,7 +48,7 @@ class Backend(ABC):
         """Start a new CLI session. Returns session ID."""
 
     @abstractmethod
-    async def resume_session(self, session_id: str) -> bool:
+    async def resume_session(self, session_id: str, cwd: str = "", model: str = "") -> bool:
         """Try to resume a session. Returns True if successful."""
 
     @abstractmethod

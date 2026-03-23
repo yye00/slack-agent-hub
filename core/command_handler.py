@@ -283,7 +283,8 @@ class CommandHandler:
             )
             return
         session_id = session["id"]
-        ok = await agent.backend.resume_session(session_id)
+        ok = await agent.backend.resume_session(
+            session_id, cwd=agent.config.cwd, model=agent.config.model)
         if ok:
             agent.current_session_id = session_id
             await self._reply(

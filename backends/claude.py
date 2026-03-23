@@ -66,12 +66,14 @@ class ClaudeBackend(Backend):
         )
         return ""  # Will be populated by first query
 
-    async def resume_session(self, session_id: str) -> bool:
+    async def resume_session(self, session_id: str, cwd: str = "", model: str = "") -> bool:
         """Resume a Claude session by ID."""
         if not session_id:
             return False
         self._pending_options = ClaudeAgentOptions(
             resume=session_id,
+            cwd=cwd or None,
+            model=model or None,
             permission_mode=self._permission_mode,
             env=_clean_env(),
             stderr=_stderr_handler,
