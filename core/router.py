@@ -73,9 +73,11 @@ class Router:
             return RouteResult(action=RouteAction.CLI_PASSTHROUGH, parsed=parsed, target_agent=default_agent)
 
         if parsed.type == MessageType.HANDOFF:
-            target = parsed.handoff_target
-            if target in self._local_agents:
-                return RouteResult(action=RouteAction.HANDOFF_LOCAL, parsed=parsed, target_agent=target)
+            target = parsed.handoff_target  # already lowercased
+            # Resolve display name to internal name
+            resolved = self._display_to_internal.get(target, target)
+            if resolved in self._local_agents:
+                return RouteResult(action=RouteAction.HANDOFF_LOCAL, parsed=parsed, target_agent=resolved)
             return RouteResult(action=RouteAction.HANDOFF_REMOTE, parsed=parsed)
 
         if parsed.type == MessageType.DISCUSS:
