@@ -117,8 +117,8 @@ class Database:
             (id, agent_name, thread_ts, label, model, backend, self._now()),
         )
 
-    async def get_session(self, id: str) -> dict | None:
-        """Get a session by exact ID or unique prefix match."""
+    async def get_session(self, id: str, agent_name: str | None = None) -> dict | None:
+        """Get a session by exact ID, unique prefix match, or name."""
         row = await self.fetch_one("SELECT * FROM sessions WHERE id=?", (id,))
         if row:
             return row
@@ -126,7 +126,20 @@ class Database:
         rows = await self.fetch_all(
             "SELECT * FROM sessions WHERE id LIKE ?", (id + "%",)
         )
-        return rows[0] if len(rows) == 1 else None
+        if len(rows) == 1:
+            return rows[0]
+        # Try name match (scoped to agent if provided)
+        if agent_name:
+            rows = await self.fetch_all(
+                "SELECT * FROM sessions WHERE agent_name=? AND name=? AND archived=0 ORDER BY created_at DESC",
+                (agent_name, id),
+            )
+        else:
+            rows = await self.fetch_all(
+                "SELECT * FROM sessions WHERE name=? AND archived=0 ORDER BY created_at DESC",
+                (id,),
+            )
+        return rows[0] if rows else None
 
     async def list_sessions(self, agent_name: str) -> list[dict]:
         return await self.fetch_all(

@@ -265,16 +265,23 @@ class CommandHandler:
                 await self._reply(channel_id, chunk, thread_ts)
 
     async def _cmd_resume(self, args, options, channel_id, thread_ts, target_agent, user):
-        """Resume a previous session by ID (supports prefix match)."""
+        """Resume a previous session by ID, prefix, or name."""
         agent = self._agents.get(target_agent)
         if not agent:
             return
         if not args:
-            await self._reply(channel_id, "Usage: !resume <session_id>", thread_ts)
+            await self._reply(channel_id, "Usage: `!resume <session_id or name>`", thread_ts)
             return
-        # Resolve prefix to full session ID via DB
-        session = await self._db.get_session(args[0])
-        session_id = session["id"] if session else args[0]
+        # Resolve by ID prefix or session name (scoped to this agent)
+        session = await self._db.get_session(args[0], agent_name=agent.name)
+        if not session:
+            await self._reply(
+                channel_id,
+                f"No session matching `{args[0]}` for {agent.display_name}. Use `!sessions` to list.",
+                thread_ts,
+            )
+            return
+        session_id = session["id"]
         ok = await agent.backend.resume_session(session_id)
         if ok:
             agent.current_session_id = session_id
