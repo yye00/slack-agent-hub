@@ -139,27 +139,37 @@ class Database:
         )
 
     async def get_session(self, id: str, agent_name: str | None = None) -> dict | None:
-        """Get a session by exact ID, unique prefix match, or name."""
-        row = await self.fetch_one("SELECT * FROM sessions WHERE id=?", (id,))
+        """Get a session by exact ID, unique prefix match, or name.
+
+        When agent_name is provided, all lookups are scoped to that agent
+        to prevent cross-agent session resume.
+        """
+        # Exact ID match (scoped if agent provided)
+        if agent_name:
+            row = await self.fetch_one(
+                "SELECT * FROM sessions WHERE id=? AND agent_name=?", (id, agent_name))
+        else:
+            row = await self.fetch_one("SELECT * FROM sessions WHERE id=?", (id,))
         if row:
             return row
-        # Try prefix match
-        rows = await self.fetch_all(
-            "SELECT * FROM sessions WHERE id LIKE ?", (id + "%",)
-        )
+        # Prefix match (scoped)
+        if agent_name:
+            rows = await self.fetch_all(
+                "SELECT * FROM sessions WHERE id LIKE ? AND agent_name=?", (id + "%", agent_name))
+        else:
+            rows = await self.fetch_all(
+                "SELECT * FROM sessions WHERE id LIKE ?", (id + "%",))
         if len(rows) == 1:
             return rows[0]
-        # Try name match (scoped to agent if provided)
+        # Name match (scoped)
         if agent_name:
             rows = await self.fetch_all(
                 "SELECT * FROM sessions WHERE agent_name=? AND name=? AND archived=0 ORDER BY created_at DESC",
-                (agent_name, id),
-            )
+                (agent_name, id))
         else:
             rows = await self.fetch_all(
                 "SELECT * FROM sessions WHERE name=? AND archived=0 ORDER BY created_at DESC",
-                (id,),
-            )
+                (id,))
         return rows[0] if rows else None
 
     async def list_sessions(self, agent_name: str) -> list[dict]:

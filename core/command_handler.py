@@ -629,6 +629,12 @@ class CommandHandler:
         profile = options.get("profile", "dev")
         target_channel = options.get("channel", "")
 
+        # Validate CWD exists
+        import os
+        if not os.path.isdir(cwd):
+            await self._reply(channel_id, f"Directory not found: `{cwd}`", thread_ts)
+            return
+
         # Resolve target channel — refresh channel list first for new channels
         spawn_channel_id = channel_id
         if target_channel:
@@ -661,6 +667,39 @@ class CommandHandler:
         except Exception as e:
             await self._reply(channel_id, f"Spawn failed: {e}", thread_ts)
 
+    async def _cmd_despawn(self, args, options, channel_id, thread_ts, target_agent, user):
+        """Remove a dynamically spawned agent."""
+        if not args:
+            await self._reply(channel_id, "Usage: `!despawn <agent_name>`", thread_ts)
+            return
+        name = args[0].lower()
+        agent = self._agents.get(name)
+        if not agent:
+            await self._reply(channel_id, f"Unknown agent: `{name}`.", thread_ts)
+            return
+        # Check if it's a spawned agent (not from config)
+        db_row = await self._db.get_agent(name)
+        if not db_row or not db_row.get("spawned"):
+            await self._reply(
+                channel_id,
+                f"`{name}` is a config-defined agent — remove it from `config.yaml` instead.",
+                thread_ts,
+            )
+            return
+        # Remove from runtime
+        del self._agents[name]
+        # Mark as removed in DB
+        await self._db.remove_spawned_agent(name)
+        # Rebuild channel mappings
+        for ch_id, agent_list in self._channel_agents.items():
+            if name in agent_list:
+                agent_list.remove(name)
+        await self._reply(
+            channel_id,
+            f"🗑️ Removed *{agent.display_name}* (`{name}`). Sessions are preserved in the DB.",
+            thread_ts,
+        )
+
     async def _cmd_help(self, args, options, channel_id, thread_ts, target_agent, user):
         help_text = (
             "*Agent Commands:*\n"
@@ -671,10 +710,11 @@ class CommandHandler:
             "  `!cancel [agent]` — cancel active query\n"
             "  `!restart [agent]` — restart agent (clear session)\n"
             "  `!spawn <name> [--backend=..] [--model=..] [--cwd=..] [--channel=#..]` — spawn new agent\n"
+            "  `!despawn <name>` — remove a spawned agent\n"
             "\n*Session Commands:*\n"
             "  `!new [label] [--model=<model>]` — start fresh session\n"
-            "  `!sessions [agent]` — list sessions (name, UUID, age, status)\n"
-            "  `!resume <session_id>` — resume a previous session\n"
+            "  `!sessions [agent|all]` — list sessions (use `all` for hub-wide)\n"
+            "  `!resume <session_id or name>` — resume a previous session\n"
             "  `!refresh` — new session, keep old in history\n"
             "  `!export <session_id>` — export session data as JSON\n"
             "  `!import <json>` — import a session from JSON\n"

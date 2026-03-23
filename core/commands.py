@@ -35,7 +35,8 @@ _CLI_PASSTHROUGH_RE = re.compile(r"^>\s*(/\S.*)", re.DOTALL)
 _HANDOFF_RE = re.compile(r"^@(\w+)@([\w-]+):\s*(.*)", re.DOTALL)
 _BROADCAST_RE = re.compile(r"^(?:Everyone|All):\s*(.*)", re.IGNORECASE | re.DOTALL)
 _DISCUSS_RE = re.compile(r"^(?:Debate|Discuss|Discussion):\s*(.*)", re.IGNORECASE | re.DOTALL)
-_OPTION_RE = re.compile(r"--(\w+)[=\s](\S+)")
+# Matches --key=value, --key="quoted value", or --key value (value must not start with --)
+_OPTION_RE = re.compile(r'--(\w+)(?:=(?:"([^"]+)"|(\S+))|(?:\s+(?!--)(?:"([^"]+)"|(\S+))))')
 
 
 def parse_message(text: str) -> ParsedCommand:
@@ -61,7 +62,9 @@ def parse_message(text: str) -> ParsedCommand:
         rest = m.group(2).strip()
         options = {}
         for opt_match in _OPTION_RE.finditer(rest):
-            options[opt_match.group(1)] = opt_match.group(2)
+            # Value is in whichever group matched (2-5)
+            val = opt_match.group(2) or opt_match.group(3) or opt_match.group(4) or opt_match.group(5) or ""
+            options[opt_match.group(1)] = val
         args_str = _OPTION_RE.sub("", rest).strip()
         args = args_str.split() if args_str else []
         return ParsedCommand(type=MessageType.COMMAND, command=command, args=args, options=options)
@@ -72,7 +75,8 @@ def parse_message(text: str) -> ParsedCommand:
         # Extract --rounds N option if present
         options = {}
         for opt_match in _OPTION_RE.finditer(topic_text):
-            options[opt_match.group(1)] = opt_match.group(2)
+            val = opt_match.group(2) or opt_match.group(3) or opt_match.group(4) or opt_match.group(5) or ""
+            options[opt_match.group(1)] = val
         topic_text = _OPTION_RE.sub("", topic_text).strip()
         return ParsedCommand(type=MessageType.DISCUSS, text=topic_text, options=options)
 
