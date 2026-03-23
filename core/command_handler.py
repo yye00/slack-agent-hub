@@ -701,6 +701,15 @@ class CommandHandler:
             thread_ts,
         )
 
+    # Aliases
+    async def _cmd_kill(self, args, options, channel_id, thread_ts, target_agent, user):
+        """Alias for !despawn."""
+        await self._cmd_despawn(args, options, channel_id, thread_ts, target_agent, user)
+
+    async def _cmd_remove(self, args, options, channel_id, thread_ts, target_agent, user):
+        """Alias for !despawn."""
+        await self._cmd_despawn(args, options, channel_id, thread_ts, target_agent, user)
+
     async def _cmd_help(self, args, options, channel_id, thread_ts, target_agent, user):
         help_text = (
             "*Agent Commands:*\n"
@@ -711,7 +720,7 @@ class CommandHandler:
             "  `!cancel [agent]` — cancel active query\n"
             "  `!restart [agent]` — restart agent (clear session)\n"
             "  `!spawn <name> [--backend=..] [--model=..] [--cwd=..] [--channel=#..]` — spawn new agent\n"
-            "  `!despawn <name>` — remove a spawned agent\n"
+            "  `!kill <name>` — remove a spawned agent (aliases: `!despawn`, `!remove`)\n"
             "\n*Session Commands:*\n"
             "  `!new [label] [--model=<model>]` — start fresh session\n"
             "  `!sessions [agent|all]` — list sessions (use `all` for hub-wide)\n"
